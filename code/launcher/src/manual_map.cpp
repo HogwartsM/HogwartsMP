@@ -126,10 +126,14 @@ bool ManualMapInject(HANDLE hProcess, const std::wstring& dllPath) {
     if (deltaImageBase != 0 && pNTHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].Size > 0) {
         std::wcout << L"Processing relocations (delta: 0x" << std::hex << deltaImageBase << std::dec << L")..." << std::endl;
 
+        DWORD relocSize = pNTHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].Size;
         auto* pRelocData = reinterpret_cast<IMAGE_BASE_RELOCATION*>(
             srcData.data() + pNTHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress);
 
-        while (pRelocData->VirtualAddress) {
+        auto* pRelocEnd = reinterpret_cast<IMAGE_BASE_RELOCATION*>(
+            reinterpret_cast<BYTE*>(pRelocData) + relocSize);
+
+        while (pRelocData < pRelocEnd && pRelocData->VirtualAddress && pRelocData->SizeOfBlock) {
             UINT numRelocations = (pRelocData->SizeOfBlock - sizeof(IMAGE_BASE_RELOCATION)) / sizeof(WORD);
             WORD* pRelocationData = reinterpret_cast<WORD*>(pRelocData + 1);
 
