@@ -16,6 +16,7 @@ std::filesystem::path Logger::_logFile;
 
 static std::ofstream logFileStream;
 static std::mutex logMutex;
+static HANDLE g_hConsole = INVALID_HANDLE_VALUE;
 
 void Logger::Initialize(const std::string& logDir, LogLevel level) {
     if (_initialized) {
@@ -48,6 +49,16 @@ void Logger::Initialize(const std::string& logDir, LogLevel level) {
         std::cerr << "[Logger] Failed to open log file: " << _logFile << std::endl;
     }
 
+    // Initialize Console Handle explicitly
+    // We open "CONOUT$" to ensure we have a direct handle to the console buffer,
+    // which works even if stdout is redirected to NUL by the host process.
+    g_hConsole = CreateFileA("CONOUT$", GENERIC_WRITE, FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
+    
+    if (g_hConsole == INVALID_HANDLE_VALUE) {
+        // Fallback to standard handle if CreateFile fails (e.g. no console attached yet)
+        g_hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
+    }
+
     _initialized = true;
 
     LogSystemInfo();
@@ -64,6 +75,11 @@ void Logger::Shutdown() {
     if (logFileStream.is_open()) {
         logFileStream.close();
     }
+
+    if (g_hConsole != INVALID_HANDLE_VALUE && g_hConsole != GetStdHandle(STD_OUTPUT_HANDLE)) {
+        CloseHandle(g_hConsole);
+    }
+    g_hConsole = INVALID_HANDLE_VALUE;
 
     _initialized = false;
 }
@@ -162,16 +178,10 @@ void Logger::Log(LogLevel level, const std::string& message, const char* file, i
 
     std::string logLine = formatted.str();
 
-    // Output to console
-    static HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
-    if (hConsole == INVALID_HANDLE_VALUE || hConsole == NULL) {
-        // Try to re-attach if valid console exists but handle is missing
-        hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
-    }
-    
-    if (hConsole != INVALID_HANDLE_VALUE && hConsole != NULL) {
+    // Output to console using the dedicated handle
+    if (g_hConsole != INVALID_HANDLE_VALUE) {
         std::string finalLog = logLine + "\n";
-        WriteConsoleA(hConsole, finalLog.c_str(), static_cast<DWORD>(finalLog.length()), nullptr, nullptr);
+        WriteConsoleA(g_hConsole, finalLog.c_str(), static_cast<DWORD>(finalLog.length()), nullptr, nullptr);
     }
 
     // Output to file
@@ -204,14 +214,6 @@ void Logger::Error(const std::string& message, const char* file, int line) {
 
 void Logger::Critical(const std::string& message, const char* file, int line) {
     Log(LogLevel::Critical, message, file, line);
-}
-
-void Logger::SetLevel(LogLevel level) {
-    _level = level;
-}
-
-LogLevel Logger::GetLevel() {
-    return _level;
 }
 
 } // namespace HogwartsMP::Logging
