@@ -16,7 +16,8 @@
       "Bash(git pull:*)",
       "Bash(git stash:*)",
       "Bash(git submodule update:*)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(where gcc:*)"
     ]
   }
 }

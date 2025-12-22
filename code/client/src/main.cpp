@@ -132,6 +132,41 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpReserved) {
             HogwartsMP::Logging::Logger::Error("Failed to load api-ms-win-crt-runtime-l1-1-0.dll");
         }
 
+        // Initialize client directly (fallback if WinMain hook doesn't trigger)
+        // This creates a thread to initialize after a delay
+        CreateThread(nullptr, 0, [](LPVOID) -> DWORD {
+            Sleep(3000); // Wait 3 seconds for game to initialize
+
+            if (!HogwartsMP::Core::gApplication || !HogwartsMP::Core::gApplication->IsInitialized()) {
+                HogwartsMP::Logging::Logger::Info("WinMain hook didn't trigger, initializing client directly...");
+
+                // Run all init functions (hooks setup)
+                InitFunction::RunAll();
+                MH_EnableHook(MH_ALL_HOOKS);
+
+                // Create our core module application
+                HogwartsMP::Core::gApplication.reset(new HogwartsMP::Core::Application);
+                if (HogwartsMP::Core::gApplication) {
+                    HogwartsMP::Core::ClientOptions opts;
+                    opts.discordAppId = 1076503389606789130;
+                    opts.useRenderer = true;
+                    opts.useImGUI = true;
+                    opts.gameName = "Hogwarts Legacy";
+                    opts.gameVersion = HogwartsMP::Version::rel;
+                    opts.renderer.backend = HogwartsMP::Core::RendererBackend::D3D12;
+                    opts.renderer.platform = HogwartsMP::Core::PlatformBackend::Win32;
+
+                    HogwartsMP::Core::gApplication->Init(opts);
+
+                    HogwartsMP::Logging::Logger::InfoF("HogwartsMP Client initialized (fallback) - %s v%s",
+                                                      opts.gameName.c_str(),
+                                                      opts.gameVersion.c_str());
+                }
+            }
+
+            return 0;
+        }, nullptr, 0, nullptr);
+
     } break;
 
     case DLL_PROCESS_DETACH: {
