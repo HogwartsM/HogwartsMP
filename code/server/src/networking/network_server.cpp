@@ -1,9 +1,31 @@
 #include "network_server.h"
 #include "../../../shared/logging/logger.h"
+#include "../logging/network_logger.h"
 #include <enet/enet.h>
 #include <ctime>
+#include <sstream>
 
 namespace HogwartsMP::Networking {
+
+static std::string PacketTypeToString(PacketType type) {
+    switch (type) {
+        case PacketType::Connect: return "CONNECT";
+        case PacketType::Disconnect: return "DISCONNECT";
+        case PacketType::ChatMessage: return "CHAT_MESSAGE";
+        case PacketType::PlayerJoin: return "PLAYER_JOIN";
+        case PacketType::PlayerLeave: return "PLAYER_LEAVE";
+        case PacketType::PlayerUpdate: return "PLAYER_UPDATE";
+        case PacketType::Event: return "EVENT";
+        case PacketType::RPC: return "RPC";
+        case PacketType::ResourceList: return "RES_LIST";
+        case PacketType::ResourceRequest: return "RES_REQUEST";
+        case PacketType::ResourceManifest: return "RES_MANIFEST";
+        case PacketType::ResourceFile: return "RES_FILE";
+        case PacketType::ResourceComplete: return "RES_COMPLETE";
+        case PacketType::Custom: return "CUSTOM";
+        default: return "UNKNOWN_" + std::to_string(static_cast<int>(type));
+    }
+}
 
 NetworkServer::NetworkServer() {
     // Initialize ENet
@@ -36,7 +58,7 @@ bool NetworkServer::Start(uint16_t port, size_t maxClients) {
     _server = enet_host_create(
         &address,           // address to bind
         maxClients,         // max clients
-        2,                  // channels (0 and 1)
+        32,                 // channels
         0,                  // incoming bandwidth (unlimited)
         0                   // outgoing bandwidth (unlimited)
     );
@@ -58,6 +80,7 @@ void NetworkServer::Stop() {
     }
 
     Logging::Logger::Info("Stopping server...");
+    Logging::NetworkLogger::Get().Shutdown();
 
     // Disconnect all clients
     for (auto& [id, client] : _clients) {
@@ -223,6 +246,8 @@ void NetworkServer::OnClientConnect(ENetPeer* peer) {
     Logging::Logger::InfoF("Client %d connected from %s:%d",
                           clientId, ipString, peer->address.port);
 
+    Logging::NetworkLogger::Get().LogConnection(ipString);
+
     if (_onClientConnected) {
         _onClientConnected(clientId);
     }
@@ -240,6 +265,8 @@ void NetworkServer::OnClientDisconnect(uint32_t clientId) {
         _peerToClient.erase(it->second.peer);
     }
 
+    Logging::NetworkLogger::Get().LogDisconnection(it->second.ipAddress);
+
     _clients.erase(it);
 
     if (_onClientDisconnected) {
@@ -254,6 +281,14 @@ void NetworkServer::OnReceive(uint32_t clientId, const uint8_t* data, size_t siz
 
     // First byte is packet type
     PacketType type = static_cast<PacketType>(data[0]);
+
+    std::string clientIp = "unknown";
+    auto it = _clients.find(clientId);
+    if (it != _clients.end()) {
+        clientIp = it->second.ipAddress;
+    }
+
+    Logging::NetworkLogger::Get().LogRequest(clientIp, PacketTypeToString(type), "/game/packet", size);
 
     if (_onPacketReceived) {
         _onPacketReceived(clientId, type, data + 1, size - 1);

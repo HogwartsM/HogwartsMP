@@ -1,7 +1,29 @@
 #include <windows.h>
 #include <MinHook.h>
+#include <crtdbg.h>
+#include <cstdio>
 
-#include "core/application.h"
+#include "Core/application.h"
+
+// Custom CRT Report Hook to log to console and trigger JIT
+int __cdecl HogwartsMPReportHook(int reportType, char* message, int* returnValue) {
+    // Log to console (stderr)
+    if (message) {
+        fprintf(stderr, "%s", message);
+    }
+
+    // If it's an error or assertion, trigger JIT (Breakpoint)
+    if (reportType == _CRT_ASSERT || reportType == _CRT_ERROR) {
+        // Trigger a breakpoint. 
+        // If a debugger is attached, it breaks here.
+        // If not, it triggers Windows Error Reporting (JIT) if enabled.
+        __debugbreak();
+        return TRUE; // Return TRUE to suppress the default message box
+    }
+
+    // For warnings, just print and continue (suppress message box)
+    return TRUE; 
+}
 #include "logging/logger.h"
 #include "shared/version.h"
 
@@ -59,12 +81,27 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpReserved) {
     switch (fdwReason) {
     case DLL_PROCESS_ATTACH: {
         // Show MessageBox to confirm DLL loaded
-        MessageBoxW(NULL, L"HogwartsMP DLL chargée !\nLa console va s'ouvrir.", L"HogwartsMP", MB_OK | MB_ICONINFORMATION);
+        // MessageBoxW(NULL, L"HogwartsMP DLL chargée !\nLa console va s'ouvrir.", L"HogwartsMP", MB_OK | MB_ICONINFORMATION);
 
-        // Allocate console for debugging
-        AllocConsole();
-        AttachConsole(GetCurrentProcessId());
-        SetConsoleTitleW(L"HogwartsMP");
+        // Try to attach to parent console (Launcher)
+        if (!AttachConsole(ATTACH_PARENT_PROCESS)) {
+            // If failed (e.g. launched directly), allocate a new console
+            AllocConsole();
+        }
+
+        // Redirect standard IO to the console
+    // FILE* fDummy;
+    // freopen_s(&fDummy, "CONIN$", "r", stdin);
+    // freopen_s(&fDummy, "CONOUT$", "w", stdout);
+    // freopen_s(&fDummy, "CONOUT$", "w", stderr);
+
+    // Install Custom CRT Report Hook
+        _CrtSetReportHook(HogwartsMPReportHook);
+        
+        // Also redirect standard assert just in case
+        _set_error_mode(_OUT_TO_STDERR);
+
+        SetConsoleTitleW(L"HogwartsMP Client");
 
         // Initialize logging
         HogwartsMP::Logging::Logger::Initialize("logs", HogwartsMP::Logging::LogLevel::Info);

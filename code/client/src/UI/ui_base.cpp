@@ -1,6 +1,6 @@
 #include "ui_base.h"
 
-#include "core/application.h"
+#include "Core/application.h"
 
 namespace HogwartsMP::Core::UI {
     bool UIBase::AreControlsLocked() const {

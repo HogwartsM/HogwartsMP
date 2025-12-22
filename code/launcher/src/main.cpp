@@ -1,6 +1,7 @@
 #include <windows.h>
 #include <tlhelp32.h>
 #include <iostream>
+#include <fstream>
 #include <string>
 #include <vector>
 #include <filesystem>
@@ -148,6 +149,23 @@ int main() {
     // Get working directory (game folder)
     std::filesystem::path gameDir = std::filesystem::path(gamePath).parent_path();
 
+    // Create steam_appid.txt to prevent restart (essential for injection persistence)
+    std::filesystem::path appIdPath = gameDir / "steam_appid.txt";
+    try {
+        if (!std::filesystem::exists(appIdPath)) {
+            LOG_INFO_W(L"Creating steam_appid.txt to prevent Steam restart...");
+            std::ofstream appIdFile(appIdPath);
+            if (appIdFile.is_open()) {
+                appIdFile << "990080";
+                appIdFile.close();
+            } else {
+                LOG_ERROR_W(L"Failed to create steam_appid.txt! Check permissions.");
+            }
+        }
+    } catch (const std::exception& e) {
+        LOG_ERROR_W(L"Error handling steam_appid.txt: " << e.what());
+    }
+
     // Create process in suspended state
     LOG_INFO_W(L"Launching game in suspended mode...");
 
@@ -197,12 +215,18 @@ int main() {
 
     LOG_INFO_W(L"Game launched successfully!");
     LOG_INFO_W(L"HogwartsMP is now active.");
-    std::wcout << L"You can close this window." << std::endl;
+    LOG_INFO_W(L"Console will remain open. Waiting for game to exit...");
+
+    // Wait for game process to exit
+    WaitForSingleObject(pi.hProcess, INFINITE);
+
+    LOG_INFO_W(L"Game exited.");
 
     // Close handles
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
 
     Logger::Shutdown();
+    system("pause");
     return 0;
 }

@@ -2,7 +2,7 @@
 
 #include <flecs.h>
 
-#include "core/application.h"
+#include "Core/application.h"
 
 #include <world/modules/base.hpp>
 #include <utils/interpolator.h>

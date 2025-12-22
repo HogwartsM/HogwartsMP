@@ -45,7 +45,7 @@ int Init() {
     }
 
     void* CreateDXGIFactory;
-    if ((CreateDXGIFactory = ::GetProcAddress(libDXGI, "CreateDXGIFactory")) == NULL) {
+    if ((CreateDXGIFactory = (void*)::GetProcAddress(libDXGI, "CreateDXGIFactory")) == NULL) {
         ::DestroyWindow(window);
         ::UnregisterClass(windowClass.lpszClassName, windowClass.hInstance);
         return -1;
@@ -66,7 +66,7 @@ int Init() {
     }
 
     void* D3D12CreateDevice;
-    if ((D3D12CreateDevice = ::GetProcAddress(libD3D12, "D3D12CreateDevice")) == NULL) {
+    if ((D3D12CreateDevice = (void*)::GetProcAddress(libD3D12, "D3D12CreateDevice")) == NULL) {
         ::DestroyWindow(window);
         ::UnregisterClass(windowClass.lpszClassName, windowClass.hInstance);
         return -1;

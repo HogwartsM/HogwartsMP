@@ -31,6 +31,8 @@ enum class PlatformBackend {
 struct ClientOptions {
     std::string gameName = "HogwartsMP";
     std::string gameVersion = "2.0.0";
+    std::string serverHost = "127.0.0.1";
+    uint16_t serverPort = 27015;
     uint64_t discordAppId = 0;
     bool useRenderer = true;
     bool useImGUI = true;
@@ -72,6 +74,11 @@ public:
     virtual void PostUpdate() = 0;
     virtual void PostRender() = 0;
     virtual bool PreShutdown() = 0;
+
+    // Overlay Access
+    void InitOverlay();
+    void RenderOverlay();
+    void UpdateOverlay();
 
     // Accessors
     flecs::world* GetWorld() const { return _world.get(); }

@@ -1,5 +1,7 @@
 #include "core/server.h"
 #include "logging/logger.h"
+#include <thread>
+#include <chrono>
 
 int main(int argc, char **argv) {
     // Initialize logging
@@ -24,7 +26,7 @@ int main(int argc, char **argv) {
     // Main server loop
     while (true) {
         server.Update();
-        // TODO: Add proper shutdown signal handling
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 
     server.Shutdown();

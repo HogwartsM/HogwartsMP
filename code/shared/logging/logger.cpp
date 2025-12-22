@@ -5,6 +5,7 @@
 #include <iomanip>
 #include <sstream>
 #include <mutex>
+#include <windows.h>
 
 namespace HogwartsMP::Logging {
 
@@ -99,10 +100,15 @@ void Logger::Log(LogLevel level, const std::string& message) {
     std::string logLine = formatted.str();
 
     // Output to console
-    if (level >= LogLevel::Error) {
-        std::cerr << logLine << std::endl;
-    } else {
-        std::cout << logLine << std::endl;
+    static HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (hConsole == INVALID_HANDLE_VALUE || hConsole == NULL) {
+        // Try to re-attach if valid console exists but handle is missing
+        hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
+    }
+    
+    if (hConsole != INVALID_HANDLE_VALUE && hConsole != NULL) {
+        std::string finalLog = logLine + "\n";
+        WriteConsoleA(hConsole, finalLog.c_str(), static_cast<DWORD>(finalLog.length()), nullptr, nullptr);
     }
 
     // Output to file

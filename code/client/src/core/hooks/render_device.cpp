@@ -1,182 +1,227 @@
 #include <utils/safe_win32.h>
-
 #include <MinHook.h>
 #include <logging/logger.h>
 #include <utils/hooking/hook_function.h>
 #include <utils/hooking/hooking.h>
 
-#include <logging/logger.h>
-
 #include "../application.h"
 #include "dx12_pointer_grab.cpp"
+#include "../../Overlay/overlay_manager.h"
 
 #include <imgui.h>
+#include <backends/imgui_impl_dx12.h>
+#include <backends/imgui_impl_win32.h>
+#include <d3d12.h>
+#include <dxgi1_4.h>
 
-class FD3D12Adapter {
-  public:
-    char pad0[0x18];
-    ID3D12Device *m_pDevice;
-};
+// Forward declare message handler from imgui_impl_win32.cpp
+extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
-class FDWindowsWindow {
-  public:
-    char pad0[0x28];
-    HWND m_pMainWindow;
-};
+namespace HogwartsMP::Core::Hooks {
 
-typedef void(__fastcall *FWindowsWindow__Initialize_t)(FDWindowsWindow *, void *, float **, HINSTANCE, void *, bool);
-FWindowsWindow__Initialize_t FWindowsWindow__Initialize_original = nullptr;
+    // Global DX12 State for ImGui
+    struct DX12FrameContext {
+        ID3D12CommandAllocator* CommandAllocator;
+        uint64_t FenceValue;
+    };
 
-typedef void(__fastcall *FWindowsApplication__ProcessMessage_t)(void *, HWND hwnd, uint32_t msg, WPARAM wParam, LPARAM lParam);
-FWindowsApplication__ProcessMessage_t FWindowsApplication__ProcessMessage_original = nullptr;
+    static bool g_ImGuiInitialized = false;
+    static ID3D12Device* g_Device = nullptr;
+    static ID3D12DescriptorHeap* g_SrvDescHeap = nullptr;
+    static ID3D12DescriptorHeap* g_RtvHeap = nullptr;
+    static ID3D12CommandQueue* g_CommandQueue = nullptr;
+    static ID3D12GraphicsCommandList* g_CommandList = nullptr;
+    static DX12FrameContext* g_FrameContext = nullptr;
+    static UINT g_FrameBufferCount = 0;
+    static ID3D12Resource** g_MainRenderTargetResource = nullptr;
+    static D3D12_CPU_DESCRIPTOR_HANDLE* g_MainRenderTargetDescriptor = nullptr;
 
-typedef void(__fastcall *FD3D12Adapter__CreateRootdevice_t)(FD3D12Adapter *, bool);
-FD3D12Adapter__CreateRootdevice_t FD3D12Adapter__CreateRootdevice_original = nullptr;
+    // Hook Function Pointers
+    typedef long(__fastcall* IDXGISwapChain3__Present_t) (IDXGISwapChain3* pSwapChain, UINT SyncInterval, UINT Flags);
+    static IDXGISwapChain3__Present_t IDXGISwapChain3__Present_original = nullptr;
 
-class FRHICommandListImmediate;
-typedef void(__fastcall *FEngineLoop__BeginFrameRenderThread_t)(void *, FRHICommandListImmediate&, uint64_t);
-FEngineLoop__BeginFrameRenderThread_t FEngineLoop__BeginFrameRenderThread_original = nullptr;
+    typedef long(__fastcall* IDXGISwapChain3__ResizeBuffers_t)(IDXGISwapChain3* pSwapChain, UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT NewFormat, UINT SwapChainFlags);
+    static IDXGISwapChain3__ResizeBuffers_t IDXGISwapChain3__ResizeBuffers_original = nullptr;
 
-void FWindowsApplication__ProcessMessage_Hook(void* pThis, HWND hwnd, uint32_t msg, WPARAM wParam, LPARAM lParam) {
-    const auto app = HogwartsMP::Core::gApplication.get();
-    if (app && app->IsInitialized()) {
-        app->GetInput()->ProcessEvent(hwnd, msg, wParam, lParam);
+    typedef void(*ID3D12CommandQueue__ExecuteCommandLists_t)(ID3D12CommandQueue* queue, UINT NumCommandLists, ID3D12CommandList* const* ppCommandLists);
+    static ID3D12CommandQueue__ExecuteCommandLists_t ID3D12CommandQueue__ExecuteCommandLists_original = nullptr;
 
-        if (app->AreControlsLocked() && app->GetImGUI()->ProcessEvent(hwnd, msg, wParam, lParam) == Framework::External::ImGUI::InputState::BLOCK) {
-            return;
+    typedef void(__fastcall *FWindowsApplication__ProcessMessage_t)(void *, HWND hwnd, uint32_t msg, WPARAM wParam, LPARAM lParam);
+    static FWindowsApplication__ProcessMessage_t FWindowsApplication__ProcessMessage_original = nullptr;
+
+    // Helper functions
+    void CleanupDeviceD3D12() {
+        if (g_FrameContext) {
+            for (UINT i = 0; i < g_FrameBufferCount; i++) {
+                if (g_FrameContext[i].CommandAllocator) g_FrameContext[i].CommandAllocator->Release();
+            }
+            delete[] g_FrameContext;
+            g_FrameContext = nullptr;
+        }
+        if (g_CommandList) { g_CommandList->Release(); g_CommandList = nullptr; }
+        if (g_SrvDescHeap) { g_SrvDescHeap->Release(); g_SrvDescHeap = nullptr; }
+        if (g_RtvHeap) { g_RtvHeap->Release(); g_RtvHeap = nullptr; }
+        if (g_MainRenderTargetResource) {
+            for (UINT i = 0; i < g_FrameBufferCount; i++) {
+                if (g_MainRenderTargetResource[i]) g_MainRenderTargetResource[i]->Release();
+            }
+            delete[] g_MainRenderTargetResource;
+            g_MainRenderTargetResource = nullptr;
+        }
+        if (g_MainRenderTargetDescriptor) {
+            delete[] g_MainRenderTargetDescriptor;
+            g_MainRenderTargetDescriptor = nullptr;
         }
     }
-    FWindowsApplication__ProcessMessage_original(pThis, hwnd, msg, wParam, lParam);
-}
 
-/* ------------- DX12 hooks section ------------- */
-typedef long(__fastcall* IDXGISwapChain3__Present_t) (IDXGISwapChain3* pSwapChain, UINT SyncInterval, UINT Flags);
-IDXGISwapChain3__Present_t IDXGISwapChain3__Present_original = nullptr;
+    void SetupRenderTarget(IDXGISwapChain3* pSwapChain) {
+        for (UINT i = 0; i < g_FrameBufferCount; i++) {
+            ID3D12Resource* pBackBuffer = nullptr;
+            pSwapChain->GetBuffer(i, IID_PPV_ARGS(&pBackBuffer));
+            g_Device->CreateRenderTargetView(pBackBuffer, nullptr, g_MainRenderTargetDescriptor[i]);
+            g_MainRenderTargetResource[i] = pBackBuffer;
+        }
+    }
 
-typedef long(__fastcall* IDXGISwapChain3__ResizeBuffers_t)(IDXGISwapChain3* pSwapChain, UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT NewFormat, UINT SwapChainFlags);
-static IDXGISwapChain3__ResizeBuffers_t IDXGISwapChain3__ResizeBuffers_orignal = nullptr;
+    // Hook Implementations
 
-typedef void(*ID3D12CommandQueue__ExecuteCommandLists_t)(ID3D12CommandQueue* queue, UINT NumCommandLists, ID3D12CommandList* ppCommandLists);
-ID3D12CommandQueue__ExecuteCommandLists_t ID3D12CommandQueue__ExecuteCommandLists_original = nullptr;
+    void ID3D12CommandQueue__ExecuteCommandLists_Hook(ID3D12CommandQueue* queue, UINT NumCommandLists, ID3D12CommandList* const* ppCommandLists) {
+        if (!g_CommandQueue) {
+            g_CommandQueue = queue;
+        }
+        ID3D12CommandQueue__ExecuteCommandLists_original(queue, NumCommandLists, ppCommandLists);
+    }
 
-long __fastcall IDXGISwapChain3__Present_Hook(IDXGISwapChain3* pSwapChain, UINT SyncInterval, UINT Flags) {
-    auto* app = HogwartsMP::Core::gApplication.get();
-    auto* renderer = app->GetRenderer();
+    long __fastcall IDXGISwapChain3__Present_Hook(IDXGISwapChain3* pSwapChain, UINT SyncInterval, UINT Flags) {
+        if (!g_ImGuiInitialized && g_CommandQueue) {
+            if (SUCCEEDED(pSwapChain->GetDevice(__uuidof(ID3D12Device), (void**)&g_Device))) {
+                DXGI_SWAP_CHAIN_DESC desc;
+                pSwapChain->GetDesc(&desc);
+                
+                g_FrameBufferCount = desc.BufferCount;
+                g_FrameContext = new DX12FrameContext[g_FrameBufferCount];
+                g_MainRenderTargetResource = new ID3D12Resource*[g_FrameBufferCount];
+                g_MainRenderTargetDescriptor = new D3D12_CPU_DESCRIPTOR_HANDLE[g_FrameBufferCount];
 
-    if(!renderer->IsInitialized()) {
-        auto opts = app->GetOptions();
-        if(opts->rendererOptions.d3d12.commandQueue) {
-            opts->rendererOptions.d3d12.swapchain = pSwapChain;
+                // Create SRV Descriptor Heap
+                D3D12_DESCRIPTOR_HEAP_DESC srvDesc = {};
+                srvDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+                srvDesc.NumDescriptors = 1;
+                srvDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+                if (FAILED(g_Device->CreateDescriptorHeap(&srvDesc, IID_PPV_ARGS(&g_SrvDescHeap)))) {
+                    return IDXGISwapChain3__Present_original(pSwapChain, SyncInterval, Flags);
+                }
 
-            if (app->RenderInit() != Framework::Integrations::Client::ClientError::CLIENT_NONE) {
-                Framework::Logging::GetLogger(FRAMEWORK_INNER_CLIENT)->error("Rendering subsystems failed to initialize");
+                for (UINT i = 0; i < g_FrameBufferCount; i++) {
+                    g_Device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&g_FrameContext[i].CommandAllocator));
+                }
+                
+                g_Device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, g_FrameContext[0].CommandAllocator, nullptr, IID_PPV_ARGS(&g_CommandList));
+                g_CommandList->Close(); // Start closed
+
+                // Setup RTVs
+                // We need a persistent RTV heap.
+                D3D12_DESCRIPTOR_HEAP_DESC rtvDesc = {};
+                rtvDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+                rtvDesc.NumDescriptors = g_FrameBufferCount;
+                rtvDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+                if (FAILED(g_Device->CreateDescriptorHeap(&rtvDesc, IID_PPV_ARGS(&g_RtvHeap)))) {
+                     return IDXGISwapChain3__Present_original(pSwapChain, SyncInterval, Flags);
+                }
+                
+                SIZE_T rtvDescriptorSize = g_Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+                D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = g_RtvHeap->GetCPUDescriptorHandleForHeapStart();
+                for (UINT i = 0; i < g_FrameBufferCount; i++) {
+                    g_MainRenderTargetDescriptor[i] = rtvHandle;
+                    rtvHandle.ptr += rtvDescriptorSize;
+                }
+                
+                SetupRenderTarget(pSwapChain);
+                
+                // Init ImGui
+                ImGui::CreateContext();
+                ImGuiIO& io = ImGui::GetIO();
+                io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+                
+                ImGui_ImplWin32_Init(desc.OutputWindow);
+                ImGui_ImplDX12_Init(g_Device, g_FrameBufferCount,
+                    desc.BufferDesc.Format, g_SrvDescHeap,
+                    g_SrvDescHeap->GetCPUDescriptorHandleForHeapStart(),
+                    g_SrvDescHeap->GetGPUDescriptorHandleForHeapStart());
+
+                // Initialize Overlay Manager (style etc) now that ImGui context is ready
+                HogwartsMP::Overlay::OverlayManager::Get().Init();
+
+                g_ImGuiInitialized = true;
+            }
+        }
+
+        if (g_ImGuiInitialized) {
+            // New Frame
+            ImGui_ImplDX12_NewFrame();
+            ImGui_ImplWin32_NewFrame();
+            ImGui::NewFrame();
+
+            // Application Overlay Render
+            auto& app = HogwartsMP::Core::gApplication;
+            if (app) {
+                app->RenderOverlay();
             }
 
-            ImGuiIO& io = ImGui::GetIO();
-            io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
+            // Render
+            ImGui::Render();
+
+            // Record command list
+            UINT backBufferIdx = pSwapChain->GetCurrentBackBufferIndex();
+            ID3D12CommandAllocator* allocator = g_FrameContext[backBufferIdx].CommandAllocator;
+            allocator->Reset();
+            
+            D3D12_RESOURCE_BARRIER barrier = {};
+            barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+            barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
+            barrier.Transition.pResource = g_MainRenderTargetResource[backBufferIdx];
+            barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+            barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
+            barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
+
+            g_CommandList->Reset(allocator, nullptr);
+            g_CommandList->ResourceBarrier(1, &barrier);
+            
+            g_CommandList->OMSetRenderTargets(1, &g_MainRenderTargetDescriptor[backBufferIdx], FALSE, nullptr);
+            g_CommandList->SetDescriptorHeaps(1, &g_SrvDescHeap);
+            
+            ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), g_CommandList);
+            
+            barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+            barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
+            g_CommandList->ResourceBarrier(1, &barrier);
+            g_CommandList->Close();
+
+            ID3D12CommandList* ppCommandLists[] = { g_CommandList };
+            g_CommandQueue->ExecuteCommandLists(1, ppCommandLists);
         }
-    } else {
-        renderer->GetD3D12Backend()->Begin();
-        app->GetImGUI()->Render();
-        renderer->GetD3D12Backend()->End();
+
+        return IDXGISwapChain3__Present_original(pSwapChain, SyncInterval, Flags);
     }
 
-    return IDXGISwapChain3__Present_original(pSwapChain, SyncInterval, Flags);
-}
-
-long __fastcall IDXGISwapChain3__ResizeBuffers_Hook(IDXGISwapChain3* pSwapChain, UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT NewFormat, UINT SwapChainFlags) {
-    return IDXGISwapChain3__ResizeBuffers_orignal(pSwapChain, BufferCount, Width, Height, NewFormat, SwapChainFlags);
-}
-
-void __fastcall ID3D12CommandQueue__ExecuteCommandLists_Hook(ID3D12CommandQueue* queue, UINT NumCommandLists, ID3D12CommandList* ppCommandLists) {
-
-    auto opts = HogwartsMP::Core::gApplication->GetOptions();
-    if (!opts->rendererOptions.d3d12.commandQueue && queue->GetDesc().Type == D3D12_COMMAND_LIST_TYPE_DIRECT) {
-        opts->rendererOptions.d3d12.commandQueue = queue;
+    long __fastcall IDXGISwapChain3__ResizeBuffers_Hook(IDXGISwapChain3* pSwapChain, UINT BufferCount, UINT Width, UINT Height, DXGI_FORMAT NewFormat, UINT SwapChainFlags) {
+        if (g_ImGuiInitialized) {
+            CleanupDeviceD3D12();
+            ImGui_ImplDX12_InvalidateDeviceObjects();
+            g_ImGuiInitialized = false;
+        }
+        return IDXGISwapChain3__ResizeBuffers_original(pSwapChain, BufferCount, Width, Height, NewFormat, SwapChainFlags);
     }
 
-    ID3D12CommandQueue__ExecuteCommandLists_original(queue, NumCommandLists, ppCommandLists);
-}
-
-void HookDX12_Functions() {
-    auto pointersRes = GrabDX12Pointers();
-    if(!pointersRes.has_value()) {
-        Framework::Logging::GetLogger(FRAMEWORK_INNER_CLIENT)->error("Unable to grab DX12 pointers !");
-        return;
+    void FWindowsApplication__ProcessMessage_Hook(void* pThis, HWND hwnd, uint32_t msg, WPARAM wParam, LPARAM lParam) {
+        if (ImGui_ImplWin32_WndProcHandler(hwnd, msg, wParam, lParam)) {
+             // If ImGui handled it and we want to block input
+             auto& app = HogwartsMP::Core::gApplication;
+             if (app && app->AreControlsLocked()) {
+                 return; 
+             }
+        }
+        FWindowsApplication__ProcessMessage_original(pThis, hwnd, msg, wParam, lParam);
     }
 
-    auto pointers = pointersRes.value();
-    Framework::Logging::GetLogger(FRAMEWORK_INNER_CLIENT)->info("DX12 pointers ExecuteCommandLists: {} Present: {} ResizeBuffers: {}",
-        pointers.ID3D12CommandQueue__ExecuteCommandLists,
-        pointers.IDXGISwapChain3__Present,
-        pointers.IDXGISwapChain3__ResizeBuffers
-    );
-
-    MH_CreateHook((LPVOID)pointers.IDXGISwapChain3__Present, (PBYTE)IDXGISwapChain3__Present_Hook, reinterpret_cast<void **>(&IDXGISwapChain3__Present_original));
-    MH_CreateHook((LPVOID)pointers.IDXGISwapChain3__ResizeBuffers, (PBYTE)IDXGISwapChain3__ResizeBuffers_Hook, reinterpret_cast<void **>(&IDXGISwapChain3__ResizeBuffers_orignal));
-    MH_CreateHook((LPVOID)pointers.ID3D12CommandQueue__ExecuteCommandLists, (PBYTE)ID3D12CommandQueue__ExecuteCommandLists_Hook, reinterpret_cast<void **>(&ID3D12CommandQueue__ExecuteCommandLists_original));
-    MH_EnableHook(NULL);
-}
-
-/* ---------------------------------------------- */
-
-void FWindowsWindow__Initialize_Hook(FDWindowsWindow *pThis, void *app, float **definitions, HINSTANCE inst, void *parent, bool showNow) {
-    FWindowsWindow__Initialize_original(pThis, app, definitions, inst, parent, showNow);
-
-    // Acquire the windows and patch the title
-    HogwartsMP::Core::gGlobals.window = pThis->m_pMainWindow;
-
-    // prepare the data
-    auto opts = HogwartsMP::Core::gApplication->GetOptions();
-    opts->rendererOptions.d3d12.device = HogwartsMP::Core::gGlobals.device;
-    opts->rendererOptions.windowHandle = HogwartsMP::Core::gGlobals.window;
-
-    SetWindowTextA(pThis->m_pMainWindow, "Hogwarts: Advanced Multiplayer Edition");
-
-    HookDX12_Functions();
-    Framework::Logging::GetLogger("Hooks")->info("Main Window created (show now {}) = {}", showNow ? "yes" : "no", fmt::ptr(pThis->m_pMainWindow));
-}
-
-void FD3D12Adapter__CreateRootdevice_Hook(FD3D12Adapter *pThis, bool withDebug) {
-    FD3D12Adapter__CreateRootdevice_original(pThis, withDebug);
-    HogwartsMP::Core::gGlobals.device = pThis->m_pDevice;
-    Framework::Logging::GetLogger("Hooks")->info("D3D12 RootDevice created (with debug {}) = {}", withDebug ? "yes" : "no", fmt::ptr(pThis->m_pDevice));
-}
-
-// void FEngineLoop__BeginFrameRenderThread_Hook(void *pThis, FRHICommandListImmediate &cmdsList, uint64_t frameCount) {
-//     FEngineLoop__BeginFrameRenderThread_original(pThis, cmdsList, frameCount);
-//     //Framework::Logging::GetLogger("Hooks")->info(" Rendering thread tick");
-// }
-
-// typedef HRESULT(__fastcall *D3D12Viewport__PresentInternal_t)(void*, int32_t);
-// D3D12Viewport__PresentInternal_t FD3D12Viewport__PresentInternal_original = nullptr;
-// HRESULT __fastcall FD3D12Viewport__PresentInternal_Hook(void* _FD3D12Viewport, int32_t SwapInterval) {
-//     const auto app = HogwartsMP::Core::gApplication.get();
-//     if (app && app->IsInitialized()) {
-//         app->GetImGUI()->Render();
-//     }
-
-//     return FD3D12Viewport__PresentInternal_original(_FD3D12Viewport, SwapInterval);
-// }
-
-static InitFunction init([]() {
-    // Initialize our FWindowsWindow Initialize method
-    const auto FWindowsWindow__Initialize_Addr = hook::pattern("4C 8B DC 53 55 56 41 54 41 55 41 56").get_first();
-    MH_CreateHook((LPVOID)FWindowsWindow__Initialize_Addr, (PBYTE)FWindowsWindow__Initialize_Hook, reinterpret_cast<void **>(&FWindowsWindow__Initialize_original));
-
-    // Initialize our FWindowsApplication ProcessMessage method
-    const auto FWindowsApplication__ProcessMessage_Addr = hook::get_opcode_address("E8 ? ? ? ? 48 8B 5C 24 ? 48 8B 6C 24 ? 48 8B 74 24 ? 48 98");
-    MH_CreateHook((LPVOID)FWindowsApplication__ProcessMessage_Addr, (PBYTE)FWindowsApplication__ProcessMessage_Hook, reinterpret_cast<void **>(&FWindowsApplication__ProcessMessage_original));
-
-    // Initialize our CreateRootDevice method
-    const auto FD3D12Adapter__CreateRootDevice_Addr = hook::pattern("48 89 5C 24 ? 55 56 57 41 54 41 55 41 56 41 57 48 8D AC 24 ? ? ? ? 48 81 EC ? ? ? ? 48 8B 05 ? ? ? ? 48 33 C4 48 89 85 ? ? ? ? 44 0F B6 FA").get_first();
-    MH_CreateHook((LPVOID)FD3D12Adapter__CreateRootDevice_Addr, (PBYTE)FD3D12Adapter__CreateRootdevice_Hook, reinterpret_cast<void **>(&FD3D12Adapter__CreateRootdevice_original));
-
-    // Init our present hook
-    // const auto FD3D12Viewport__PresentInternal_Addr = hook::pattern("89 54 24 10 4C 8B DC 57").get_first();
-    // MH_CreateHook((LPVOID)FD3D12Viewport__PresentInternal_Addr, (PBYTE)FD3D12Viewport__PresentInternal_Hook, reinterpret_cast<void **>(&FD3D12Viewport__PresentInternal_original));
-
-    // Initialize our Tick method
-    //const auto FEngineLoop__BeginFrameRenderThread_Addr = hook::get_opcode_address("E8 ? ? ? ? EB 54 33 D2 48 8D 4D 50");
-    //MH_CreateHook((LPVOID)FEngineLoop__BeginFrameRenderThread_Addr, (PBYTE)FEngineLoop__BeginFrameRenderThread_Hook, reinterpret_cast<void **>(&FEngineLoop__BeginFrameRenderThread_original));
-},"Render_Device");
+} // namespace HogwartsMP::Core::Hooks

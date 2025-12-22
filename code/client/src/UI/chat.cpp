@@ -1,7 +1,7 @@
 #include "chat.h"
 
-#include "core/application.h"
-// #include "game/helpers/controls.h"
+#include "Core/application.h"
+// #include "Game/helpers/controls.h"
 
 #include <imgui/imgui.h>
 

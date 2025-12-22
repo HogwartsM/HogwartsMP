@@ -1,11 +1,15 @@
 #pragma once
 
 #include "server_instance.h"
+#include "cli.h"
 
 namespace HogwartsMP {
     class Server: public Core::ServerInstance {
       private:
         void InitNetworkingMessages();
+        void InitCommands();
+        
+        std::unique_ptr<Core::CLI> _cli;
 
       public:
         Server();
