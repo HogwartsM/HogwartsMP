@@ -4,8 +4,10 @@
 #include <string>
 #include <vector>
 #include <filesystem>
+#include "manual_map.h"
 
-// Simple launcher that injects DLL before Denuvo activation
+// Advanced launcher with Manual Map injection
+// Bypasses Denuvo by mapping DLL directly without LoadLibrary
 // Uses CREATE_SUSPENDED to inject before anti-cheat initializes
 
 std::wstring GetGamePath() {
@@ -75,7 +77,14 @@ bool InjectDLL(HANDLE hProcess, const std::wstring& dllPath) {
     }
 
     // Wait for injection to complete
-    WaitForSingleObject(hThread, INFINITE);
+    DWORD waitResult = WaitForSingleObject(hThread, 10000); // 10 second timeout
+
+    if (waitResult == WAIT_TIMEOUT) {
+        std::wcerr << L"Injection timeout - thread may be blocked by anti-cheat" << std::endl;
+        CloseHandle(hThread);
+        VirtualFreeEx(hProcess, pRemoteLibPath, 0, MEM_RELEASE);
+        return false;
+    }
 
     // Get LoadLibrary return value (module handle)
     DWORD exitCode = 0;
@@ -86,9 +95,18 @@ bool InjectDLL(HANDLE hProcess, const std::wstring& dllPath) {
 
     if (exitCode == 0) {
         std::wcerr << L"LoadLibrary failed in target process" << std::endl;
+        std::wcerr << L"Possible causes:" << std::endl;
+        std::wcerr << L"  1. DLL dependencies missing (check MinGW DLLs)" << std::endl;
+        std::wcerr << L"  2. Anti-cheat (Denuvo) blocking DLL load" << std::endl;
+        std::wcerr << L"  3. DLL architecture mismatch (must be x64)" << std::endl;
+        std::wcerr << L"  4. DLL corrupted or path incorrect" << std::endl;
+
+        // Try to get more info from target process
+        std::wcerr << L"\nDLL path sent to target: " << dllPath << std::endl;
         return false;
     }
 
+    std::wcout << L"DLL loaded successfully at address: 0x" << std::hex << exitCode << std::dec << std::endl;
     return true;
 }
 
@@ -153,10 +171,10 @@ int main() {
     // Wait a bit for process to initialize
     Sleep(1000);
 
-    // Inject DLL while process is suspended
-    std::wcout << L"Injecting HogwartsMP DLL..." << std::endl;
+    // Inject DLL using Manual Map (bypasses Denuvo detection)
+    std::wcout << L"Injecting HogwartsMP DLL using Manual Map..." << std::endl;
 
-    if (!InjectDLL(pi.hProcess, dllPath)) {
+    if (!ManualMapInject(pi.hProcess, dllPath)) {
         std::wcerr << L"DLL injection failed!" << std::endl;
         TerminateProcess(pi.hProcess, 1);
         CloseHandle(pi.hProcess);
