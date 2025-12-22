@@ -186,6 +186,8 @@ bool ManualMapInject(HANDLE hProcess, const std::wstring& dllPath) {
 
     // Copy loader stub to target
     SIZE_T stubSize = reinterpret_cast<SIZE_T>(&LoaderStubEnd) - reinterpret_cast<SIZE_T>(&LoaderStub);
+    std::wcout << L"Loader stub size: " << stubSize << L" bytes" << std::endl;
+
     void* pLoaderStub = VirtualAllocEx(hProcess, nullptr, stubSize,
                                        MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
     if (!pLoaderStub) {
@@ -195,6 +197,8 @@ bool ManualMapInject(HANDLE hProcess, const std::wstring& dllPath) {
         return false;
     }
 
+    std::wcout << L"Loader stub allocated at: 0x" << std::hex << pLoaderStub << std::dec << std::endl;
+
     if (!WriteProcessMemory(hProcess, pLoaderStub, (void*)&LoaderStub, stubSize, nullptr)) {
         std::wcerr << L"Failed to write loader stub: " << GetLastError() << std::endl;
         VirtualFreeEx(hProcess, pTargetBase, 0, MEM_RELEASE);
@@ -203,6 +207,10 @@ bool ManualMapInject(HANDLE hProcess, const std::wstring& dllPath) {
         return false;
     }
 
+    std::wcout << L"Loader data address: 0x" << std::hex << pLoaderData << std::dec << std::endl;
+    std::wcout << L"  imageBase: 0x" << std::hex << data.imageBase << std::dec << std::endl;
+    std::wcout << L"  fnLoadLibraryA: 0x" << std::hex << reinterpret_cast<void*>(data.fnLoadLibraryA) << std::dec << std::endl;
+    std::wcout << L"  fnGetProcAddress: 0x" << std::hex << reinterpret_cast<void*>(data.fnGetProcAddress) << std::dec << std::endl;
     std::wcout << L"Executing loader stub..." << std::endl;
 
     // Execute loader stub
