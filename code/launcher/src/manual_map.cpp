@@ -2,6 +2,7 @@
 #include <iostream>
 #include <fstream>
 #include <vector>
+#include "Logger.h"
 
 // Stub function that runs in target process
 DWORD WINAPI LoaderStub(LPVOID pData) {
@@ -54,12 +55,12 @@ DWORD WINAPI LoaderStub(LPVOID pData) {
 DWORD WINAPI LoaderStubEnd() { return 0; }
 
 bool ManualMapInject(HANDLE hProcess, const std::wstring& dllPath) {
-    std::wcout << L"Starting Manual Map injection..." << std::endl;
+    LOG_INFO_W(L"Starting Manual Map injection...");
 
     // Read DLL file
     std::ifstream File(dllPath.c_str(), std::ios::binary | std::ios::ate);
     if (!File.is_open()) {
-        std::wcerr << L"Failed to open DLL file: " << dllPath << std::endl;
+        LOG_ERROR_W(L"Failed to open DLL file: " << dllPath);
         return false;
     }
 
@@ -72,34 +73,34 @@ bool ManualMapInject(HANDLE hProcess, const std::wstring& dllPath) {
     // Validate PE headers
     auto* pDosHeader = reinterpret_cast<IMAGE_DOS_HEADER*>(srcData.data());
     if (pDosHeader->e_magic != 0x5A4D) { // "MZ"
-        std::wcerr << L"Invalid PE file (bad DOS header)" << std::endl;
+        LOG_ERROR_W(L"Invalid PE file (bad DOS header)");
         return false;
     }
 
     auto* pNTHeaders = reinterpret_cast<IMAGE_NT_HEADERS*>(srcData.data() + pDosHeader->e_lfanew);
     if (pNTHeaders->Signature != IMAGE_NT_SIGNATURE) {
-        std::wcerr << L"Invalid PE file (bad NT signature)" << std::endl;
+        LOG_ERROR_W(L"Invalid PE file (bad NT signature)");
         return false;
     }
 
     auto& OptionalHeader = pNTHeaders->OptionalHeader;
     auto* pSectionHeader = IMAGE_FIRST_SECTION(pNTHeaders);
 
-    std::wcout << L"DLL image size: 0x" << std::hex << OptionalHeader.SizeOfImage << std::dec << std::endl;
+    LOG_INFO_W(L"DLL image size: 0x" << std::hex << OptionalHeader.SizeOfImage << std::dec);
 
     // Allocate memory in target process
     void* pTargetBase = VirtualAllocEx(hProcess, nullptr, OptionalHeader.SizeOfImage,
                                        MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
     if (!pTargetBase) {
-        std::wcerr << L"Failed to allocate memory in target process: " << GetLastError() << std::endl;
+        LOG_ERROR_W(L"Failed to allocate memory in target process: " << GetLastError());
         return false;
     }
 
-    std::wcout << L"Allocated memory at: 0x" << std::hex << pTargetBase << std::dec << std::endl;
+    LOG_INFO_W(L"Allocated memory at: 0x" << std::hex << pTargetBase << std::dec);
 
     // Map headers
     if (!WriteProcessMemory(hProcess, pTargetBase, srcData.data(), OptionalHeader.SizeOfHeaders, nullptr)) {
-        std::wcerr << L"Failed to write headers: " << GetLastError() << std::endl;
+        LOG_ERROR_W(L"Failed to write headers: " << GetLastError());
         VirtualFreeEx(hProcess, pTargetBase, 0, MEM_RELEASE);
         return false;
     }
@@ -113,18 +114,18 @@ bool ManualMapInject(HANDLE hProcess, const std::wstring& dllPath) {
         if (!WriteProcessMemory(hProcess, pSectionDest,
                                srcData.data() + pSectionHeader->PointerToRawData,
                                pSectionHeader->SizeOfRawData, nullptr)) {
-            std::wcerr << L"Failed to write section " << i << L": " << GetLastError() << std::endl;
+            LOG_ERROR_W(L"Failed to write section " << i << L": " << GetLastError());
             VirtualFreeEx(hProcess, pTargetBase, 0, MEM_RELEASE);
             return false;
         }
     }
 
-    std::wcout << L"Sections mapped successfully" << std::endl;
+    LOG_INFO_W(L"Sections mapped successfully");
 
     // Process relocations
     DWORD_PTR deltaImageBase = reinterpret_cast<DWORD_PTR>(pTargetBase) - pNTHeaders->OptionalHeader.ImageBase;
     if (deltaImageBase != 0 && pNTHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].Size > 0) {
-        std::wcout << L"Processing relocations (delta: 0x" << std::hex << deltaImageBase << std::dec << L")..." << std::endl;
+        LOG_INFO_W(L"Processing relocations (delta: 0x" << std::hex << deltaImageBase << std::dec << L")...");
 
         DWORD relocSize = pNTHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].Size;
         auto* pRelocData = reinterpret_cast<IMAGE_BASE_RELOCATION*>(
@@ -155,7 +156,7 @@ bool ManualMapInject(HANDLE hProcess, const std::wstring& dllPath) {
                 reinterpret_cast<BYTE*>(pRelocData) + pRelocData->SizeOfBlock);
         }
 
-        std::wcout << L"Processed " << relocBlockCount << L" relocation blocks" << std::endl;
+        LOG_INFO_W(L"Processed " << relocBlockCount << L" relocation blocks");
 
         // Rewrite sections with relocated data
         pSectionHeader = IMAGE_FIRST_SECTION(pNTHeaders);
@@ -169,7 +170,7 @@ bool ManualMapInject(HANDLE hProcess, const std::wstring& dllPath) {
                              pSectionHeader->SizeOfRawData, nullptr);
         }
 
-        std::wcout << L"Relocations processed" << std::endl;
+        LOG_INFO_W(L"Relocations processed");
     }
 
     // Prepare loader data
@@ -184,13 +185,13 @@ bool ManualMapInject(HANDLE hProcess, const std::wstring& dllPath) {
     void* pLoaderData = VirtualAllocEx(hProcess, nullptr, sizeof(ManualMapData),
                                        MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
     if (!pLoaderData) {
-        std::wcerr << L"Failed to allocate loader data: " << GetLastError() << std::endl;
+        LOG_ERROR_W(L"Failed to allocate loader data: " << GetLastError());
         VirtualFreeEx(hProcess, pTargetBase, 0, MEM_RELEASE);
         return false;
     }
 
     if (!WriteProcessMemory(hProcess, pLoaderData, &data, sizeof(ManualMapData), nullptr)) {
-        std::wcerr << L"Failed to write loader data: " << GetLastError() << std::endl;
+        LOG_ERROR_W(L"Failed to write loader data: " << GetLastError());
         VirtualFreeEx(hProcess, pTargetBase, 0, MEM_RELEASE);
         VirtualFreeEx(hProcess, pLoaderData, 0, MEM_RELEASE);
         return false;
@@ -198,39 +199,39 @@ bool ManualMapInject(HANDLE hProcess, const std::wstring& dllPath) {
 
     // Copy loader stub to target
     SIZE_T stubSize = reinterpret_cast<SIZE_T>(&LoaderStubEnd) - reinterpret_cast<SIZE_T>(&LoaderStub);
-    std::wcout << L"Loader stub size: " << stubSize << L" bytes" << std::endl;
+    LOG_INFO_W(L"Loader stub size: " << stubSize << L" bytes");
 
     void* pLoaderStub = VirtualAllocEx(hProcess, nullptr, stubSize,
                                        MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
     if (!pLoaderStub) {
-        std::wcerr << L"Failed to allocate loader stub: " << GetLastError() << std::endl;
+        LOG_ERROR_W(L"Failed to allocate loader stub: " << GetLastError());
         VirtualFreeEx(hProcess, pTargetBase, 0, MEM_RELEASE);
         VirtualFreeEx(hProcess, pLoaderData, 0, MEM_RELEASE);
         return false;
     }
 
-    std::wcout << L"Loader stub allocated at: 0x" << std::hex << pLoaderStub << std::dec << std::endl;
+    LOG_INFO_W(L"Loader stub allocated at: 0x" << std::hex << pLoaderStub << std::dec);
 
     if (!WriteProcessMemory(hProcess, pLoaderStub, (void*)&LoaderStub, stubSize, nullptr)) {
-        std::wcerr << L"Failed to write loader stub: " << GetLastError() << std::endl;
+        LOG_ERROR_W(L"Failed to write loader stub: " << GetLastError());
         VirtualFreeEx(hProcess, pTargetBase, 0, MEM_RELEASE);
         VirtualFreeEx(hProcess, pLoaderData, 0, MEM_RELEASE);
         VirtualFreeEx(hProcess, pLoaderStub, 0, MEM_RELEASE);
         return false;
     }
 
-    std::wcout << L"Loader data address: 0x" << std::hex << pLoaderData << std::dec << std::endl;
-    std::wcout << L"  imageBase: 0x" << std::hex << data.imageBase << std::dec << std::endl;
-    std::wcout << L"  fnLoadLibraryA: 0x" << std::hex << reinterpret_cast<void*>(data.fnLoadLibraryA) << std::dec << std::endl;
-    std::wcout << L"  fnGetProcAddress: 0x" << std::hex << reinterpret_cast<void*>(data.fnGetProcAddress) << std::dec << std::endl;
-    std::wcout << L"Executing loader stub..." << std::endl;
+    LOG_INFO_W(L"Loader data address: 0x" << std::hex << pLoaderData << std::dec);
+    LOG_INFO_W(L"  imageBase: 0x" << std::hex << data.imageBase << std::dec);
+    LOG_INFO_W(L"  fnLoadLibraryA: 0x" << std::hex << reinterpret_cast<void*>(data.fnLoadLibraryA) << std::dec);
+    LOG_INFO_W(L"  fnGetProcAddress: 0x" << std::hex << reinterpret_cast<void*>(data.fnGetProcAddress) << std::dec);
+    LOG_INFO_W(L"Executing loader stub...");
 
     // Execute loader stub
     HANDLE hThread = CreateRemoteThread(hProcess, nullptr, 0,
                                        (LPTHREAD_START_ROUTINE)pLoaderStub,
                                        pLoaderData, 0, nullptr);
     if (!hThread) {
-        std::wcerr << L"Failed to create remote thread: " << GetLastError() << std::endl;
+        LOG_ERROR_W(L"Failed to create remote thread: " << GetLastError());
         VirtualFreeEx(hProcess, pTargetBase, 0, MEM_RELEASE);
         VirtualFreeEx(hProcess, pLoaderData, 0, MEM_RELEASE);
         VirtualFreeEx(hProcess, pLoaderStub, 0, MEM_RELEASE);
@@ -240,7 +241,7 @@ bool ManualMapInject(HANDLE hProcess, const std::wstring& dllPath) {
     // Wait for loader to complete
     DWORD waitResult = WaitForSingleObject(hThread, 10000);
     if (waitResult == WAIT_TIMEOUT) {
-        std::wcerr << L"Loader stub timeout" << std::endl;
+        LOG_ERROR_W(L"Loader stub timeout");
         CloseHandle(hThread);
         return false;
     }
@@ -254,13 +255,13 @@ bool ManualMapInject(HANDLE hProcess, const std::wstring& dllPath) {
     VirtualFreeEx(hProcess, pLoaderStub, 0, MEM_RELEASE);
 
     if (exitCode != 0) {
-        std::wcerr << L"Loader stub failed with exit code: " << exitCode << std::endl;
+        LOG_ERROR_W(L"Loader stub failed with exit code: " << exitCode);
         VirtualFreeEx(hProcess, pTargetBase, 0, MEM_RELEASE);
         return false;
     }
 
-    std::wcout << L"Manual Map injection successful!" << std::endl;
-    std::wcout << L"DLL base address: 0x" << std::hex << pTargetBase << std::dec << std::endl;
+    LOG_INFO_W(L"Manual Map injection successful!");
+    LOG_INFO_W(L"DLL base address: 0x" << std::hex << pTargetBase << std::dec);
 
     return true;
 }

@@ -2,6 +2,8 @@ set(HOGWARTSMP_LAUNCHER_FILES
     src/main.cpp
     src/manual_map.cpp
     src/manual_map.h
+    src/Logger.cpp
+    src/Logger.h
 )
 
 add_executable(HogwartsMPLauncher ${HOGWARTSMP_LAUNCHER_FILES})

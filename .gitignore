@@ -10,6 +10,7 @@ cmake_install.cmake
 x64
 build
 CMakeFiles
+logs
 *.lib
 *.exp
 *.dir
