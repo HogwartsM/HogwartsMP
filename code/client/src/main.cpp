@@ -1,190 +1,80 @@
 #include <windows.h>
-#include <MinHook.h>
-#include <crtdbg.h>
 #include <cstdio>
+#include <thread>
+#include <chrono>
 
-#include "Core/application.h"
-
-// Custom CRT Report Hook to log to console and trigger JIT
-int __cdecl HogwartsMPReportHook(int reportType, char* message, int* returnValue) {
-    // Log to console (stderr)
-    if (message) {
-        fprintf(stderr, "%s", message);
-    }
-
-    // If it's an error or assertion, trigger JIT (Breakpoint)
-    if (reportType == _CRT_ASSERT || reportType == _CRT_ERROR) {
-        // Trigger a breakpoint. 
-        // If a debugger is attached, it breaks here.
-        // If not, it triggers Windows Error Reporting (JIT) if enabled.
-        __debugbreak();
-        return TRUE; // Return TRUE to suppress the default message box
-    }
-
-    // For warnings, just print and continue (suppress message box)
-    return TRUE; 
-}
+#include "Core/client_instance.h"
 #include "logging/logger.h"
 #include "shared/version.h"
 
-// Hook system base address
-namespace hook {
-    static uintptr_t g_base = 0;
+// Global client instance
+std::unique_ptr<HogwartsMP::Core::ClientInstance> gClient = nullptr;
+bool gRunning = true;
 
-    void set_base(uintptr_t base = 0) {
-        if (base == 0) {
-            g_base = reinterpret_cast<uintptr_t>(GetModuleHandle(nullptr));
-        } else {
-            g_base = base;
+// Main client thread
+void ClientThread() {
+    HogwartsMP::Logging::Logger::Info("Client thread started.");
+
+    // Create client instance
+    gClient = std::make_unique<HogwartsMP::Core::ClientInstance>();
+
+    HogwartsMP::Core::ClientOptions opts;
+    opts.gameName = "Hogwarts Legacy";
+    opts.gameVersion = HogwartsMP::Version::rel;
+    opts.serverHost = "127.0.0.1";
+    opts.serverPort = 27015;
+
+    // Initialize (connects to server)
+    if (gClient->Init(opts)) {
+        HogwartsMP::Logging::Logger::Info("Client initialized. Entering update loop...");
+
+        // Update loop
+        while (gRunning) {
+            gClient->Update();
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
+
+        gClient->Shutdown();
+    } else {
+        HogwartsMP::Logging::Logger::Error("Failed to initialize client.");
     }
 
-    uintptr_t get_base() {
-        return g_base;
-    }
-}
-
-typedef char *(__fastcall *GetNarrowWinMainCommandLine_t)();
-GetNarrowWinMainCommandLine_t GetNarrowWinMainCommandLine_original = nullptr;
-
-char *GetNarrowWinMainCommandLine() {
-    HogwartsMP::Logging::Logger::Info("GetNarrowWinMainCommandLine called - initializing client");
-
-    // Create our core module application
-    HogwartsMP::Core::gApplication.reset(new HogwartsMP::Core::Application);
-    if (HogwartsMP::Core::gApplication && !HogwartsMP::Core::gApplication->IsInitialized()) {
-        HogwartsMP::Core::ClientOptions opts;
-        opts.discordAppId = 1076503389606789130;
-        opts.useRenderer = true;
-        opts.useImGUI = true;
-        opts.gameName = "Hogwarts Legacy";
-        opts.gameVersion = HogwartsMP::Version::rel;
-        opts.renderer.backend = HogwartsMP::Core::RendererBackend::D3D12;
-        opts.renderer.platform = HogwartsMP::Core::PlatformBackend::Win32;
-
-        HogwartsMP::Core::gApplication->Init(opts);
-
-        HogwartsMP::Logging::Logger::InfoF("HogwartsMP Client initialized - %s v%s",
-                                          opts.gameName.c_str(),
-                                          opts.gameVersion.c_str());
-    }
-
-    return GetNarrowWinMainCommandLine_original();
+    gClient.reset();
+    HogwartsMP::Logging::Logger::Info("Client thread exited.");
+    
+    // Free console and unload DLL when done
+    FreeConsole();
+    FreeLibraryAndExitThread(GetModuleHandle(NULL), 0);
 }
 
 BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpReserved) {
     switch (fdwReason) {
     case DLL_PROCESS_ATTACH: {
-        // Show MessageBox to confirm DLL loaded
-        // MessageBoxW(NULL, L"HogwartsMP DLL chargée !\nLa console va s'ouvrir.", L"HogwartsMP", MB_OK | MB_ICONINFORMATION);
+        DisableThreadLibraryCalls(hinstDLL);
 
-        // Try to attach to parent console (Launcher)
-        if (!AttachConsole(ATTACH_PARENT_PROCESS)) {
-            // If failed (e.g. launched directly), allocate a new console
-            AllocConsole();
-        }
+        // Allocate console for debugging
+        AllocConsole();
+        FILE* fDummy;
+        freopen_s(&fDummy, "CONIN$", "r", stdin);
+        freopen_s(&fDummy, "CONOUT$", "w", stdout);
+        freopen_s(&fDummy, "CONOUT$", "w", stderr);
+        SetConsoleTitleW(L"HogwartsMP Client Debug");
 
-        // Redirect standard IO to the console
-    // FILE* fDummy;
-    // freopen_s(&fDummy, "CONIN$", "r", stdin);
-    // freopen_s(&fDummy, "CONOUT$", "w", stdout);
-    // freopen_s(&fDummy, "CONOUT$", "w", stderr);
-
-    // Install Custom CRT Report Hook
-        _CrtSetReportHook(HogwartsMPReportHook);
-        
-        // Also redirect standard assert just in case
-        _set_error_mode(_OUT_TO_STDERR);
-
-        SetConsoleTitleW(L"HogwartsMP Client");
-
-        // Initialize logging
+        // Initialize logger
         HogwartsMP::Logging::Logger::Initialize("logs", HogwartsMP::Logging::LogLevel::Info);
-        HogwartsMP::Logging::Logger::Info("HogwartsMP DLL loaded");
+        HogwartsMP::Logging::Logger::Info("HogwartsMP DLL Loaded (Clean Network Mode)");
 
-        // Show MessageBox to confirm DLL injection
-        MessageBoxW(NULL, L"HogwartsMP DLL injectée avec succès!\nLes logs sont dans le dossier 'logs'.", L"HogwartsMP Loaded", MB_OK | MB_ICONINFORMATION);
-
-        // Initialize MinHook
-        MH_Initialize();
-
-        // Set base address for hooking
-        auto base = GetModuleHandle(nullptr);
-        hook::set_base(reinterpret_cast<uintptr_t>(base));
-
-        // Hook the WinMain command line function to delay initialization
-        // This ensures we initialize after Denuvo unpacking
-        auto handle = LoadLibrary(TEXT("api-ms-win-crt-runtime-l1-1-0.dll"));
-        if (handle) {
-            auto procAddr = GetProcAddress((HMODULE)handle, "_get_narrow_winmain_command_line");
-            if (procAddr) {
-                MH_CreateHook(reinterpret_cast<LPVOID>(procAddr),
-                             reinterpret_cast<LPVOID>(&GetNarrowWinMainCommandLine),
-                             reinterpret_cast<LPVOID*>(&GetNarrowWinMainCommandLine_original));
-                MH_EnableHook(reinterpret_cast<LPVOID>(procAddr));
-                HogwartsMP::Logging::Logger::Info("WinMain hook installed");
-            } else {
-                HogwartsMP::Logging::Logger::Error("Failed to find _get_narrow_winmain_command_line");
-            }
-        } else {
-            HogwartsMP::Logging::Logger::Error("Failed to load api-ms-win-crt-runtime-l1-1-0.dll");
-        }
-
-        // Initialize client directly (fallback if WinMain hook doesn't trigger)
-        // This creates a thread to initialize after a delay
-        CreateThread(nullptr, 0, [](LPVOID) -> DWORD {
-            Sleep(3000); // Wait 3 seconds for game to initialize
-
-            if (!HogwartsMP::Core::gApplication || !HogwartsMP::Core::gApplication->IsInitialized()) {
-                HogwartsMP::Logging::Logger::Info("WinMain hook didn't trigger, initializing client directly...");
-
-                // Show MessageBox to confirm initialization started
-                MessageBoxW(NULL, L"Initialisation du client HogwartsMP...", L"HogwartsMP Client", MB_OK | MB_ICONINFORMATION);
-
-                // Create our core module application
-                HogwartsMP::Core::gApplication.reset(new HogwartsMP::Core::Application);
-                if (HogwartsMP::Core::gApplication) {
-                    HogwartsMP::Core::ClientOptions opts;
-                    opts.discordAppId = 1076503389606789130;
-                    opts.useRenderer = true;
-                    opts.useImGUI = true;
-                    opts.gameName = "Hogwarts Legacy";
-                    opts.gameVersion = HogwartsMP::Version::rel;
-                    opts.renderer.backend = HogwartsMP::Core::RendererBackend::D3D12;
-                    opts.renderer.platform = HogwartsMP::Core::PlatformBackend::Win32;
-
-                    bool initSuccess = HogwartsMP::Core::gApplication->Init(opts);
-
-                    HogwartsMP::Logging::Logger::InfoF("HogwartsMP Client initialized (fallback) - %s v%s - Success: %d",
-                                                      opts.gameName.c_str(),
-                                                      opts.gameVersion.c_str(),
-                                                      initSuccess);
-
-                    // Show MessageBox to confirm connection attempt
-                    if (initSuccess) {
-                        MessageBoxW(NULL, L"Client initialisé! Connexion au serveur établie.", L"HogwartsMP Client", MB_OK | MB_ICONINFORMATION);
-                    } else {
-                        MessageBoxW(NULL, L"Échec de l'initialisation du client!", L"HogwartsMP Client", MB_OK | MB_ICONERROR);
-                    }
-                }
-            } else {
-                HogwartsMP::Logging::Logger::Info("WinMain hook triggered successfully, skipping fallback init");
-            }
-
-            return 0;
-        }, nullptr, 0, nullptr);
-
-    } break;
+        // Start client thread
+        std::thread(ClientThread).detach();
+        break;
+    }
 
     case DLL_PROCESS_DETACH: {
-        if (HogwartsMP::Core::gApplication) {
-            HogwartsMP::Core::gApplication->Shutdown();
-            HogwartsMP::Core::gApplication.reset();
-        }
-
-        MH_Uninitialize();
-        HogwartsMP::Logging::Logger::Info("HogwartsMP DLL unloaded");
-    } break;
+        gRunning = false;
+        // Give some time for thread to cleanup (rudimentary)
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        break;
+    }
     }
 
     return TRUE;

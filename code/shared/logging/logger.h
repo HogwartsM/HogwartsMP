@@ -21,12 +21,12 @@ public:
     static void Shutdown();
 
     // Logging methods
-    static void Trace(const std::string& message);
-    static void Debug(const std::string& message);
-    static void Info(const std::string& message);
-    static void Warning(const std::string& message);
-    static void Error(const std::string& message);
-    static void Critical(const std::string& message);
+    static void Trace(const std::string& message, const char* file = nullptr, int line = 0);
+    static void Debug(const std::string& message, const char* file = nullptr, int line = 0);
+    static void Info(const std::string& message, const char* file = nullptr, int line = 0);
+    static void Warning(const std::string& message, const char* file = nullptr, int line = 0);
+    static void Error(const std::string& message, const char* file = nullptr, int line = 0);
+    static void Critical(const std::string& message, const char* file = nullptr, int line = 0);
 
     // Formatted logging (printf-style)
     template<typename... Args>
@@ -63,7 +63,11 @@ public:
     static LogLevel GetLevel();
 
 private:
-    static void Log(LogLevel level, const std::string& message);
+    static void Log(LogLevel level, const std::string& message, const char* file = nullptr, int line = 0);
+    static void RotateIfNeeded();
+    static void LogSystemInfo();
+    static std::string GetTimestamp();
+    static const size_t MAX_LOG_SIZE = 5 * 1024 * 1024; // 5 MB
 
     template<typename... Args>
     static std::string Format(const char* format, Args&&... args) {
@@ -81,12 +85,12 @@ private:
 };
 
 // Convenience macros
-#define LOG_TRACE(msg)    HogwartsMP::Logging::Logger::Trace(msg)
-#define LOG_DEBUG(msg)    HogwartsMP::Logging::Logger::Debug(msg)
-#define LOG_INFO(msg)     HogwartsMP::Logging::Logger::Info(msg)
-#define LOG_WARNING(msg)  HogwartsMP::Logging::Logger::Warning(msg)
-#define LOG_ERROR(msg)    HogwartsMP::Logging::Logger::Error(msg)
-#define LOG_CRITICAL(msg) HogwartsMP::Logging::Logger::Critical(msg)
+#define LOG_TRACE(msg)    HogwartsMP::Logging::Logger::Trace(msg, __FILE__, __LINE__)
+#define LOG_DEBUG(msg)    HogwartsMP::Logging::Logger::Debug(msg, __FILE__, __LINE__)
+#define LOG_INFO(msg)     HogwartsMP::Logging::Logger::Info(msg, __FILE__, __LINE__)
+#define LOG_WARNING(msg)  HogwartsMP::Logging::Logger::Warning(msg, __FILE__, __LINE__)
+#define LOG_ERROR(msg)    HogwartsMP::Logging::Logger::Error(msg, __FILE__, __LINE__)
+#define LOG_CRITICAL(msg) HogwartsMP::Logging::Logger::Critical(msg, __FILE__, __LINE__)
 
 #define LOG_TRACE_F(fmt, ...)    HogwartsMP::Logging::Logger::TraceF(fmt, __VA_ARGS__)
 #define LOG_DEBUG_F(fmt, ...)    HogwartsMP::Logging::Logger::DebugF(fmt, __VA_ARGS__)
