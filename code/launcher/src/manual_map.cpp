@@ -121,6 +121,45 @@ bool ManualMapInject(HANDLE hProcess, const std::wstring& dllPath) {
 
     std::wcout << L"Sections mapped successfully" << std::endl;
 
+    // Process relocations
+    DWORD_PTR deltaImageBase = reinterpret_cast<DWORD_PTR>(pTargetBase) - pNTHeaders->OptionalHeader.ImageBase;
+    if (deltaImageBase != 0 && pNTHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].Size > 0) {
+        std::wcout << L"Processing relocations (delta: 0x" << std::hex << deltaImageBase << std::dec << L")..." << std::endl;
+
+        auto* pRelocData = reinterpret_cast<IMAGE_BASE_RELOCATION*>(
+            srcData.data() + pNTHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress);
+
+        while (pRelocData->VirtualAddress) {
+            UINT numRelocations = (pRelocData->SizeOfBlock - sizeof(IMAGE_BASE_RELOCATION)) / sizeof(WORD);
+            WORD* pRelocationData = reinterpret_cast<WORD*>(pRelocData + 1);
+
+            for (UINT i = 0; i < numRelocations; ++i, ++pRelocationData) {
+                if ((*pRelocationData >> 12) == IMAGE_REL_BASED_DIR64) {
+                    DWORD_PTR* pPatch = reinterpret_cast<DWORD_PTR*>(
+                        srcData.data() + pRelocData->VirtualAddress + (*pRelocationData & 0xFFF));
+                    *pPatch += deltaImageBase;
+                }
+            }
+
+            pRelocData = reinterpret_cast<IMAGE_BASE_RELOCATION*>(
+                reinterpret_cast<BYTE*>(pRelocData) + pRelocData->SizeOfBlock);
+        }
+
+        // Rewrite sections with relocated data
+        pSectionHeader = IMAGE_FIRST_SECTION(pNTHeaders);
+        for (UINT i = 0; i < pNTHeaders->FileHeader.NumberOfSections; ++i, ++pSectionHeader) {
+            if (pSectionHeader->SizeOfRawData == 0)
+                continue;
+
+            void* pSectionDest = (BYTE*)pTargetBase + pSectionHeader->VirtualAddress;
+            WriteProcessMemory(hProcess, pSectionDest,
+                             srcData.data() + pSectionHeader->PointerToRawData,
+                             pSectionHeader->SizeOfRawData, nullptr);
+        }
+
+        std::wcout << L"Relocations processed" << std::endl;
+    }
+
     // Prepare loader data
     ManualMapData data;
     data.imageBase = pTargetBase;
