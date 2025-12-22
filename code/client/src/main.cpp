@@ -54,14 +54,17 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpReserved) {
 
         // Allocate console for debugging
         AllocConsole();
-        FILE* fDummy;
-        freopen_s(&fDummy, "CONIN$", "r", stdin);
-        freopen_s(&fDummy, "CONOUT$", "w", stdout);
-        freopen_s(&fDummy, "CONOUT$", "w", stderr);
         SetConsoleTitleW(L"HogwartsMP Client Debug");
 
         // Initialize logger
         HogwartsMP::Logging::Logger::Initialize("logs", HogwartsMP::Logging::LogLevel::Info);
+
+        // Redirect standard streams to NUL to suppress game/engine logs in our console
+        // Our logger uses a direct handle to CONOUT$ so it remains unaffected
+        FILE* fDummy;
+        freopen_s(&fDummy, "NUL", "w", stdout);
+        freopen_s(&fDummy, "NUL", "w", stderr);
+
         HogwartsMP::Logging::Logger::Info("HogwartsMP DLL Loaded (Clean Network Mode)");
 
         // Start client thread
