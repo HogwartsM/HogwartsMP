@@ -9,7 +9,8 @@
       "Bash(Select-Object -First 50)",
       "Bash(ldd:*)",
       "Bash(ls:*)",
-      "Bash(cmake:*)"
+      "Bash(cmake:*)",
+      "Bash(git add:*)"
     ]
   }
 }
