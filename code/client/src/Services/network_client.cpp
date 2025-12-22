@@ -34,7 +34,7 @@ bool NetworkClient::Connect(const std::string& hostname, uint16_t port, uint32_t
     _client = enet_host_create(
         nullptr,  // create a client host
         1,        // only allow 1 outgoing connection
-        2,        // allow up 2 channels to be used (0 and 1)
+        32,       // allow up to 32 channels
         0,        // assume any amount of incoming bandwidth
         0         // assume any amount of outgoing bandwidth
     );
@@ -50,7 +50,7 @@ bool NetworkClient::Connect(const std::string& hostname, uint16_t port, uint32_t
     address.port = port;
 
     // Initiate connection
-    _peer = enet_host_connect(_client, &address, 2, 0);
+    _peer = enet_host_connect(_client, &address, 32, 0);
 
     if (_peer == nullptr) {
         Logging::Logger::Error("No available peers for initiating an ENet connection");
@@ -63,6 +63,7 @@ bool NetworkClient::Connect(const std::string& hostname, uint16_t port, uint32_t
 
     // Wait for connection to succeed
     ENetEvent event;
+    // Increase timeout to ensure connection
     if (enet_host_service(_client, &event, timeout) > 0 &&
         event.type == ENET_EVENT_TYPE_CONNECT) {
         OnConnect();
@@ -71,6 +72,9 @@ bool NetworkClient::Connect(const std::string& hostname, uint16_t port, uint32_t
         Logging::Logger::Error("Connection to server failed (timeout)");
         enet_peer_reset(_peer);
         _peer = nullptr;
+        // Don't destroy client here, we might want to retry later
+        // But for now, user requested strict blocking.
+        // Actually, ClientInstance::Init fails if we return false, so destroying is fine/correct for this flow.
         enet_host_destroy(_client);
         _client = nullptr;
         return false;

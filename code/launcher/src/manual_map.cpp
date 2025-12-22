@@ -128,35 +128,75 @@ bool ManualMapInject(HANDLE hProcess, const std::wstring& dllPath) {
         LOG_INFO_W(L"Processing relocations (delta: 0x" << std::hex << deltaImageBase << std::dec << L")...");
 
         DWORD relocSize = pNTHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].Size;
-        auto* pRelocData = reinterpret_cast<IMAGE_BASE_RELOCATION*>(
-            srcData.data() + pNTHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress);
+        
+        // Find the section that contains the relocations
+        // The VirtualAddress in DataDirectory is an RVA, we need to find the offset in the file (srcData)
+        DWORD relocRVA = pNTHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress;
+        DWORD relocOffset = 0;
+        
+        IMAGE_SECTION_HEADER* pSection = IMAGE_FIRST_SECTION(pNTHeaders);
+        for (UINT i = 0; i < pNTHeaders->FileHeader.NumberOfSections; ++i, ++pSection) {
+            if (relocRVA >= pSection->VirtualAddress && relocRVA < pSection->VirtualAddress + pSection->Misc.VirtualSize) {
+                relocOffset = pSection->PointerToRawData + (relocRVA - pSection->VirtualAddress);
+                break;
+            }
+        }
+        
+        if (relocOffset == 0) {
+             LOG_ERROR_W(L"Could not find relocation section in file");
+        } else {
+            auto* pRelocData = reinterpret_cast<IMAGE_BASE_RELOCATION*>(srcData.data() + relocOffset);
+            auto* pRelocEnd = reinterpret_cast<IMAGE_BASE_RELOCATION*>(srcData.data() + relocOffset + relocSize);
 
-        auto* pRelocEnd = reinterpret_cast<IMAGE_BASE_RELOCATION*>(
-            reinterpret_cast<BYTE*>(pRelocData) + relocSize);
+            LOG_INFO_W(L"Relocations found at offset: 0x" << std::hex << relocOffset << L" size: 0x" << relocSize << std::dec);
 
-        int relocBlockCount = 0;
-        while (pRelocData < pRelocEnd && pRelocData->VirtualAddress && pRelocData->SizeOfBlock) {
-            UINT numRelocations = (pRelocData->SizeOfBlock - sizeof(IMAGE_BASE_RELOCATION)) / sizeof(WORD);
-            WORD* pRelocationData = reinterpret_cast<WORD*>(pRelocData + 1);
+            int relocBlockCount = 0;
+            while (pRelocData < pRelocEnd && pRelocData->SizeOfBlock > 0) {
+                // Bounds check for the block header
+                if (reinterpret_cast<BYTE*>(pRelocData) + sizeof(IMAGE_BASE_RELOCATION) > reinterpret_cast<BYTE*>(pRelocEnd)) {
+                     LOG_WARN_W(L"Relocation block header out of bounds, stopping.");
+                     break;
+                }
+                
+                UINT numRelocations = (pRelocData->SizeOfBlock - sizeof(IMAGE_BASE_RELOCATION)) / sizeof(WORD);
+                WORD* pRelocationData = reinterpret_cast<WORD*>(pRelocData + 1);
 
-            for (UINT i = 0; i < numRelocations; ++i, ++pRelocationData) {
-                if ((*pRelocationData >> 12) == IMAGE_REL_BASED_DIR64) {
-                    DWORD rva = pRelocData->VirtualAddress + (*pRelocationData & 0xFFF);
+                // Check bounds for the current block
+                if (reinterpret_cast<BYTE*>(pRelocData) + pRelocData->SizeOfBlock > reinterpret_cast<BYTE*>(pRelocEnd)) {
+                    LOG_ERROR_W(L"Relocation block extends past end of relocation data. BlockSize: " << pRelocData->SizeOfBlock);
+                    break;
+                }
 
-                    // Bounds check
-                    if (rva + sizeof(DWORD_PTR) <= srcData.size()) {
-                        DWORD_PTR* pPatch = reinterpret_cast<DWORD_PTR*>(srcData.data() + rva);
-                        *pPatch += deltaImageBase;
+                for (UINT i = 0; i < numRelocations; ++i, ++pRelocationData) {
+                    if ((*pRelocationData >> 12) == IMAGE_REL_BASED_DIR64) {
+                        DWORD rva = pRelocData->VirtualAddress + (*pRelocationData & 0xFFF);
+
+                        // Find which section this RVA belongs to for patching
+                        // We need to patch the raw data in srcData, so we convert RVA -> Raw Offset
+                        DWORD patchOffset = 0;
+                        IMAGE_SECTION_HEADER* pPatchSection = IMAGE_FIRST_SECTION(pNTHeaders);
+                        for (UINT j = 0; j < pNTHeaders->FileHeader.NumberOfSections; ++j, ++pPatchSection) {
+                             if (rva >= pPatchSection->VirtualAddress && rva < pPatchSection->VirtualAddress + pPatchSection->Misc.VirtualSize) {
+                                 patchOffset = pPatchSection->PointerToRawData + (rva - pPatchSection->VirtualAddress);
+                                 break;
+                             }
+                        }
+
+                        if (patchOffset != 0 && patchOffset + sizeof(DWORD_PTR) <= srcData.size()) {
+                            DWORD_PTR* pPatch = reinterpret_cast<DWORD_PTR*>(srcData.data() + patchOffset);
+                            *pPatch += deltaImageBase;
+                        } else {
+                             // LOG_WARN_W(L"Relocation RVA out of bounds or not in section: 0x" << std::hex << rva << std::dec);
+                        }
                     }
                 }
+
+                relocBlockCount++;
+                pRelocData = reinterpret_cast<IMAGE_BASE_RELOCATION*>(
+                    reinterpret_cast<BYTE*>(pRelocData) + pRelocData->SizeOfBlock);
             }
-
-            relocBlockCount++;
-            pRelocData = reinterpret_cast<IMAGE_BASE_RELOCATION*>(
-                reinterpret_cast<BYTE*>(pRelocData) + pRelocData->SizeOfBlock);
+            LOG_INFO_W(L"Processed " << relocBlockCount << L" relocation blocks");
         }
-
-        LOG_INFO_W(L"Processed " << relocBlockCount << L" relocation blocks");
 
         // Rewrite sections with relocated data
         pSectionHeader = IMAGE_FIRST_SECTION(pNTHeaders);

@@ -1,6 +1,6 @@
 #include "teleport_manager.h"
 
-#include "core/application.h"
+#include "Core/application.h"
 
 #include <imgui/imgui.h>
 

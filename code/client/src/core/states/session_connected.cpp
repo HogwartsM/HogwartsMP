@@ -5,7 +5,7 @@
 
 #include <external/imgui/widgets/corner_text.h>
 
-#include "core/application.h"
+#include "Core/application.h"
 
 namespace HogwartsMP::Core::States {
     SessionConnectedState::SessionConnectedState() {}

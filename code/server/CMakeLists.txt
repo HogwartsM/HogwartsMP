@@ -2,10 +2,12 @@ set(HOGWARTSMP_SERVER_FILES
     src/main.cpp
     src/core/server.cpp
     src/core/server_instance.cpp
+    src/core/cli.cpp
 
     src/core/modules/human.cpp
 
     src/networking/network_server.cpp
+    src/logging/network_logger.cpp
     ../shared/networking/network_packet.cpp
     ../shared/logging/logger.cpp
 
