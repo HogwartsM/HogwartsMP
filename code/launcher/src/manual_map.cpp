@@ -133,21 +133,29 @@ bool ManualMapInject(HANDLE hProcess, const std::wstring& dllPath) {
         auto* pRelocEnd = reinterpret_cast<IMAGE_BASE_RELOCATION*>(
             reinterpret_cast<BYTE*>(pRelocData) + relocSize);
 
+        int relocBlockCount = 0;
         while (pRelocData < pRelocEnd && pRelocData->VirtualAddress && pRelocData->SizeOfBlock) {
             UINT numRelocations = (pRelocData->SizeOfBlock - sizeof(IMAGE_BASE_RELOCATION)) / sizeof(WORD);
             WORD* pRelocationData = reinterpret_cast<WORD*>(pRelocData + 1);
 
             for (UINT i = 0; i < numRelocations; ++i, ++pRelocationData) {
                 if ((*pRelocationData >> 12) == IMAGE_REL_BASED_DIR64) {
-                    DWORD_PTR* pPatch = reinterpret_cast<DWORD_PTR*>(
-                        srcData.data() + pRelocData->VirtualAddress + (*pRelocationData & 0xFFF));
-                    *pPatch += deltaImageBase;
+                    DWORD rva = pRelocData->VirtualAddress + (*pRelocationData & 0xFFF);
+
+                    // Bounds check
+                    if (rva + sizeof(DWORD_PTR) <= srcData.size()) {
+                        DWORD_PTR* pPatch = reinterpret_cast<DWORD_PTR*>(srcData.data() + rva);
+                        *pPatch += deltaImageBase;
+                    }
                 }
             }
 
+            relocBlockCount++;
             pRelocData = reinterpret_cast<IMAGE_BASE_RELOCATION*>(
                 reinterpret_cast<BYTE*>(pRelocData) + pRelocData->SizeOfBlock);
         }
+
+        std::wcout << L"Processed " << relocBlockCount << L" relocation blocks" << std::endl;
 
         // Rewrite sections with relocated data
         pSectionHeader = IMAGE_FIRST_SECTION(pNTHeaders);
