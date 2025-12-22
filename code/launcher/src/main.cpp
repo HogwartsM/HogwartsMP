@@ -1,46 +1,183 @@
-#include <Windows.h>
+#include <windows.h>
+#include <tlhelp32.h>
+#include <iostream>
+#include <string>
+#include <vector>
+#include <filesystem>
 
-#include <launcher/project.h>
+// Simple launcher that injects DLL before Denuvo activation
+// Uses CREATE_SUSPENDED to inject before anti-cheat initializes
 
-int main (void) {
-    Framework::Launcher::ProjectConfiguration config;
-    config.destinationDllName = L"HogwartsMPClient.dll";
-    config.executableName     = L"HogwartsLegacy.exe";
-    config.name               = "HogwartsMP";
-    config.launchType         = Framework::Launcher::ProjectLaunchType::DLL_INJECTION;
-    config.platform           = Framework::Launcher::ProjectPlatform::STEAM;
-    config.preferSteam        = true;
-    config.steamAppId         = 990080;
-    config.alternativeWorkDir    = L"Phoenix/Binaries/Win64";
-    config.additionalLaunchArguments = L" dx12 d3d12 -SaveToUserDir -UserDir=\"Hogwarts Legacy\\HogwartsMP\"";
-    config.useAlternativeWorkDir = true;
-    config.additionalSearchPaths      = {
-        L"Engine\\Binaries\\ThirdParty\\DbgHelp",
-        L"Engine\\Binaries\\ThirdParty\\NVIDIA\\GeForceNOW\\Win64",
-        L"Engine\\Binaries\\ThirdParty\\NVIDIA\\NVaftermath\\Win64\\GFSDK_Aftermath_Lib",
-        L"Engine\\Binaries\\ThirdParty\\Ogg\\Win64\\VS2015",
-        L"Engine\\Binaries\\ThirdParty\\Steamworks\\Steamv154\\Win64",
-        L"Engine\\Binaries\\ThirdParty\\Windows\\XAudio2_9\\x64",
-        L"Engine\\Plugins\\Runtime\\Intel\\XeSS\\Binaries\\ThirdParty\\Win64",
-        L"Engine\\Plugins\\Runtime\\Nvidia\\Ansel\\Binaries\\ThirdParty",
-        L"Engine\\Plugins\\Runtime\\Nvidia\\DLSS\\Binaries\\ThirdParty\\Win64",
-        L"Engine\\Plugins\\Runtime\\Nvidia\\NVIDIAGfeSDK\\ThirdParty\\NVIDIAGfeSDK\\redist\\Win64",
-        L"Engine\\Plugins\\Runtime\\Nvidia\\Streamline\\Binaries\\ThirdParty\\Win64",
-        L"Engine\\Plugins\\Runtime\\Nvidia\\Streamline\\Binaries\\ThirdParty\\Win64\\sl",
-        L"Phoenix\\Binaries\\Win64\\EOSSDK-Win64",
-        L"Phoenix\\Binaries\\Win64",
-        L"Phoenix\\Plugins\\ChromaSDKPlugin\\Binaries\\Win64",
-        L"Phoenix\\Plugins\\Wwise\\ThirdParty\\x64_vc160\\Release\\bin",
+std::wstring GetGamePath() {
+    // TODO: Add Steam library detection
+    // For now, user must have game in default location or set via config
+
+    // Try common Steam install locations
+    std::vector<std::wstring> possiblePaths = {
+        L"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Hogwarts Legacy\\Phoenix\\Binaries\\Win64\\HogwartsLegacy.exe",
+        L"D:\\SteamLibrary\\steamapps\\common\\Hogwarts Legacy\\Phoenix\\Binaries\\Win64\\HogwartsLegacy.exe",
+        L"E:\\SteamLibrary\\steamapps\\common\\Hogwarts Legacy\\Phoenix\\Binaries\\Win64\\HogwartsLegacy.exe"
     };
 
-#ifdef FW_DEBUG
-    config.allocateDeveloperConsole = true;
-    config.developerConsoleTitle    = L"hogwartsmp: dev-console";
-#endif
+    for (const auto& path : possiblePaths) {
+        if (std::filesystem::exists(path)) {
+            return path;
+        }
+    }
 
-    Framework::Launcher::Project project(config);
-    if (!project.Launch()) {
+    return L"";
+}
+
+std::wstring GetDllPath() {
+    wchar_t exePath[MAX_PATH];
+    GetModuleFileNameW(NULL, exePath, MAX_PATH);
+
+    std::filesystem::path launcherPath(exePath);
+    std::filesystem::path dllPath = launcherPath.parent_path() / L"libHogwartsMPClient.dll";
+
+    return dllPath.wstring();
+}
+
+bool InjectDLL(HANDLE hProcess, const std::wstring& dllPath) {
+    // Allocate memory in target process for DLL path
+    void* pRemoteLibPath = VirtualAllocEx(hProcess, NULL, (dllPath.length() + 1) * sizeof(wchar_t),
+                                          MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    if (!pRemoteLibPath) {
+        std::wcerr << L"Failed to allocate memory in target process: " << GetLastError() << std::endl;
+        return false;
+    }
+
+    // Write DLL path to target process
+    if (!WriteProcessMemory(hProcess, pRemoteLibPath, dllPath.c_str(),
+                           (dllPath.length() + 1) * sizeof(wchar_t), NULL)) {
+        std::wcerr << L"Failed to write DLL path: " << GetLastError() << std::endl;
+        VirtualFreeEx(hProcess, pRemoteLibPath, 0, MEM_RELEASE);
+        return false;
+    }
+
+    // Get LoadLibraryW address (same in all processes)
+    HMODULE hKernel32 = GetModuleHandleW(L"kernel32.dll");
+    FARPROC pLoadLibraryW = GetProcAddress(hKernel32, "LoadLibraryW");
+    if (!pLoadLibraryW) {
+        std::wcerr << L"Failed to get LoadLibraryW address" << std::endl;
+        VirtualFreeEx(hProcess, pRemoteLibPath, 0, MEM_RELEASE);
+        return false;
+    }
+
+    // Create remote thread to load DLL
+    HANDLE hThread = CreateRemoteThread(hProcess, NULL, 0,
+                                       (LPTHREAD_START_ROUTINE)pLoadLibraryW,
+                                       pRemoteLibPath, 0, NULL);
+    if (!hThread) {
+        std::wcerr << L"Failed to create remote thread: " << GetLastError() << std::endl;
+        VirtualFreeEx(hProcess, pRemoteLibPath, 0, MEM_RELEASE);
+        return false;
+    }
+
+    // Wait for injection to complete
+    WaitForSingleObject(hThread, INFINITE);
+
+    // Get LoadLibrary return value (module handle)
+    DWORD exitCode = 0;
+    GetExitCodeThread(hThread, &exitCode);
+
+    CloseHandle(hThread);
+    VirtualFreeEx(hProcess, pRemoteLibPath, 0, MEM_RELEASE);
+
+    if (exitCode == 0) {
+        std::wcerr << L"LoadLibrary failed in target process" << std::endl;
+        return false;
+    }
+
+    return true;
+}
+
+int main() {
+    std::wcout << L"=== HogwartsMP Launcher v2.0.0 ===" << std::endl;
+    std::wcout << L"Denuvo bypass injection method" << std::endl << std::endl;
+
+    // Get paths
+    std::wstring gamePath = GetGamePath();
+    std::wstring dllPath = GetDllPath();
+
+    if (gamePath.empty()) {
+        std::wcerr << L"ERROR: Could not find Hogwarts Legacy installation!" << std::endl;
+        std::wcerr << L"Please specify game path manually." << std::endl;
+        std::wcout << L"Enter full path to HogwartsLegacy.exe: ";
+        std::getline(std::wcin, gamePath);
+
+        if (!std::filesystem::exists(gamePath)) {
+            std::wcerr << L"ERROR: Game not found at specified path!" << std::endl;
+            system("pause");
+            return 1;
+        }
+    }
+
+    if (!std::filesystem::exists(dllPath)) {
+        std::wcerr << L"ERROR: libHogwartsMPClient.dll not found!" << std::endl;
+        std::wcerr << L"Expected location: " << dllPath << std::endl;
+        system("pause");
         return 1;
     }
+
+    std::wcout << L"Game path: " << gamePath << std::endl;
+    std::wcout << L"DLL path: " << dllPath << std::endl << std::endl;
+
+    // Get working directory (game folder)
+    std::filesystem::path gameDir = std::filesystem::path(gamePath).parent_path();
+
+    // Create process in suspended state
+    std::wcout << L"Launching game in suspended mode..." << std::endl;
+
+    STARTUPINFOW si = { sizeof(si) };
+    PROCESS_INFORMATION pi = { 0 };
+
+    if (!CreateProcessW(
+        gamePath.c_str(),
+        NULL,
+        NULL,
+        NULL,
+        FALSE,
+        CREATE_SUSPENDED,  // Launch suspended to inject before Denuvo
+        NULL,
+        gameDir.c_str(),
+        &si,
+        &pi)) {
+        std::wcerr << L"Failed to launch game: " << GetLastError() << std::endl;
+        system("pause");
+        return 1;
+    }
+
+    std::wcout << L"Game process created (PID: " << pi.dwProcessId << L")" << std::endl;
+
+    // Wait a bit for process to initialize
+    Sleep(1000);
+
+    // Inject DLL while process is suspended
+    std::wcout << L"Injecting HogwartsMP DLL..." << std::endl;
+
+    if (!InjectDLL(pi.hProcess, dllPath)) {
+        std::wcerr << L"DLL injection failed!" << std::endl;
+        TerminateProcess(pi.hProcess, 1);
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
+        system("pause");
+        return 1;
+    }
+
+    std::wcout << L"DLL injected successfully!" << std::endl;
+    std::wcout << L"Resuming game execution..." << std::endl;
+
+    // Resume game execution
+    ResumeThread(pi.hThread);
+
+    std::wcout << L"Game launched successfully!" << std::endl;
+    std::wcout << L"HogwartsMP is now active." << std::endl << std::endl;
+    std::wcout << L"You can close this window." << std::endl;
+
+    // Close handles
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+
     return 0;
 }

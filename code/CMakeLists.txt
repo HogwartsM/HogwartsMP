@@ -3,11 +3,10 @@ configure_file("${CMAKE_CURRENT_SOURCE_DIR}/shared/version.cpp" "${CMAKE_BINARY_
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
-# Always build client on 64-bit systems
+# Always build client and launcher on 64-bit systems
 if(CMAKE_SIZEOF_VOID_P EQUAL 8)
     add_subdirectory(client)
-    # Launcher disabled - missing launcher/project.h
-    # add_subdirectory(launcher)
+    add_subdirectory(launcher)
 endif()
 
 add_subdirectory(server)
