@@ -157,13 +157,18 @@ namespace HogwartsMP::Core::Hooks {
         }
 
         if (g_ImGuiInitialized) {
+            // Update Application (network, ECS, etc.)
+            auto& app = HogwartsMP::Core::gApplication;
+            if (app) {
+                app->Update();
+            }
+
             // New Frame
             ImGui_ImplDX12_NewFrame();
             ImGui_ImplWin32_NewFrame();
             ImGui::NewFrame();
 
             // Application Overlay Render
-            auto& app = HogwartsMP::Core::gApplication;
             if (app) {
                 app->RenderOverlay();
             }

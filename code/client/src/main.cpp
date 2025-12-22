@@ -107,6 +107,9 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpReserved) {
         HogwartsMP::Logging::Logger::Initialize("logs", HogwartsMP::Logging::LogLevel::Info);
         HogwartsMP::Logging::Logger::Info("HogwartsMP DLL loaded");
 
+        // Show MessageBox to confirm DLL injection
+        MessageBoxW(NULL, L"HogwartsMP DLL injectée avec succès!\nLes logs sont dans le dossier 'logs'.", L"HogwartsMP Loaded", MB_OK | MB_ICONINFORMATION);
+
         // Initialize MinHook
         MH_Initialize();
 
@@ -140,6 +143,9 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpReserved) {
             if (!HogwartsMP::Core::gApplication || !HogwartsMP::Core::gApplication->IsInitialized()) {
                 HogwartsMP::Logging::Logger::Info("WinMain hook didn't trigger, initializing client directly...");
 
+                // Show MessageBox to confirm initialization started
+                MessageBoxW(NULL, L"Initialisation du client HogwartsMP...", L"HogwartsMP Client", MB_OK | MB_ICONINFORMATION);
+
                 // Run all init functions (hooks setup)
                 InitFunction::RunAll();
                 MH_EnableHook(MH_ALL_HOOKS);
@@ -156,12 +162,22 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpReserved) {
                     opts.renderer.backend = HogwartsMP::Core::RendererBackend::D3D12;
                     opts.renderer.platform = HogwartsMP::Core::PlatformBackend::Win32;
 
-                    HogwartsMP::Core::gApplication->Init(opts);
+                    bool initSuccess = HogwartsMP::Core::gApplication->Init(opts);
 
-                    HogwartsMP::Logging::Logger::InfoF("HogwartsMP Client initialized (fallback) - %s v%s",
+                    HogwartsMP::Logging::Logger::InfoF("HogwartsMP Client initialized (fallback) - %s v%s - Success: %d",
                                                       opts.gameName.c_str(),
-                                                      opts.gameVersion.c_str());
+                                                      opts.gameVersion.c_str(),
+                                                      initSuccess);
+
+                    // Show MessageBox to confirm connection attempt
+                    if (initSuccess) {
+                        MessageBoxW(NULL, L"Client initialisé! Connexion au serveur établie.", L"HogwartsMP Client", MB_OK | MB_ICONINFORMATION);
+                    } else {
+                        MessageBoxW(NULL, L"Échec de l'initialisation du client!", L"HogwartsMP Client", MB_OK | MB_ICONERROR);
+                    }
                 }
+            } else {
+                HogwartsMP::Logging::Logger::Info("WinMain hook triggered successfully, skipping fallback init");
             }
 
             return 0;
