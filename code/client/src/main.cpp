@@ -44,16 +44,11 @@ namespace hook {
     }
 }
 
-// Init functions system defined in utils/hooking/hook_function.h
-#include <utils/hooking/hook_function.h>
-
 typedef char *(__fastcall *GetNarrowWinMainCommandLine_t)();
 GetNarrowWinMainCommandLine_t GetNarrowWinMainCommandLine_original = nullptr;
 
 char *GetNarrowWinMainCommandLine() {
-    // Run all init functions (hooks setup)
-    InitFunction::RunAll();
-    MH_EnableHook(MH_ALL_HOOKS);
+    HogwartsMP::Logging::Logger::Info("GetNarrowWinMainCommandLine called - initializing client");
 
     // Create our core module application
     HogwartsMP::Core::gApplication.reset(new HogwartsMP::Core::Application);
@@ -145,10 +140,6 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpReserved) {
 
                 // Show MessageBox to confirm initialization started
                 MessageBoxW(NULL, L"Initialisation du client HogwartsMP...", L"HogwartsMP Client", MB_OK | MB_ICONINFORMATION);
-
-                // Run all init functions (hooks setup)
-                InitFunction::RunAll();
-                MH_EnableHook(MH_ALL_HOOKS);
 
                 // Create our core module application
                 HogwartsMP::Core::gApplication.reset(new HogwartsMP::Core::Application);
