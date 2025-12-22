@@ -76,8 +76,15 @@ The launcher will:
 ### 2. Clone Repository
 
 ```cmd
-git clone https://github.com/Akitium/HogwartsM.git
+git clone --recursive https://github.com/Akitium/HogwartsM.git
 cd HogwartsM
+```
+
+**Important**: Use `--recursive` to automatically download vendor dependencies (glm, minhook).
+
+If you already cloned without `--recursive`, initialize submodules manually:
+```cmd
+git submodule update --init --recursive
 ```
 
 ### 3. Compile
@@ -153,6 +160,12 @@ Make sure MinGW bin folder is in PATH:
 ```cmd
 where gcc
 # Should output: C:\mingw64\bin\gcc.exe
+```
+
+### "vendor/glm or vendor/minhook is empty"
+You forgot to initialize Git submodules. Run:
+```cmd
+git submodule update --init --recursive
 ```
 
 ## 🗺️ Roadmap
