@@ -8,11 +8,12 @@
 #include <chrono>
 #include <windows.h>
 
-namespace HogwartsMP::Logging {
+namespace HogwartsMP {
+namespace Logging {
 
 bool Logger::_initialized = false;
 LogLevel Logger::_level = LogLevel::Info;
-std::filesystem::path Logger::_logFile;
+fs::path Logger::_logFile;
 
 static std::ofstream logFileStream;
 static std::mutex logMutex;
@@ -26,8 +27,8 @@ void Logger::Initialize(const std::string& logDir, LogLevel level) {
     _level = level;
 
     // Create logs directory
-    if (!std::filesystem::exists(logDir)) {
-        std::filesystem::create_directories(logDir);
+    if (!fs::exists(logDir)) {
+        fs::create_directories(logDir);
     }
 
     // Create log file with timestamp
@@ -101,15 +102,15 @@ void Logger::RotateIfNeeded() {
         logFileStream.close();
 
         // Rename current file to .old
-        std::filesystem::path oldPath = _logFile;
+        fs::path oldPath = _logFile;
         oldPath += ".old";
         
         // Remove existing .old if it exists
-        if (std::filesystem::exists(oldPath)) {
-            std::filesystem::remove(oldPath);
+        if (fs::exists(oldPath)) {
+            fs::remove(oldPath);
         }
         
-        std::filesystem::rename(_logFile, oldPath);
+        fs::rename(_logFile, oldPath);
 
         // Open new file
         logFileStream.open(_logFile, std::ios::out | std::ios::app);
@@ -171,7 +172,7 @@ void Logger::Log(LogLevel level, const std::string& message, const char* file, i
     formatted << "[" << timestamp << "] [" << levelStr << "] ";
     
     if (file) {
-        formatted << "[" << std::filesystem::path(file).filename().string() << ":" << line << "] ";
+        formatted << "[" << fs::path(file).filename().string() << ":" << line << "] ";
     }
     
     formatted << message;
@@ -216,4 +217,5 @@ void Logger::Critical(const std::string& message, const char* file, int line) {
     Log(LogLevel::Critical, message, file, line);
 }
 
-} // namespace HogwartsMP::Logging
+} // namespace Logging
+} // namespace HogwartsMP

@@ -2,6 +2,7 @@
 #include "../../../shared/logging/logger.h"
 #include "../networking/network_server.h"
 #include <vector>
+#include <chrono>
 
 namespace HogwartsMP {
 
@@ -32,6 +33,16 @@ namespace HogwartsMP {
     void Server::PostUpdate() {
         // TODO: Update server logic
         // TODO: Process player updates
+
+        uint64_t currentTime = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        if (currentTime - _lastCoordinateRequestTime >= 1000) {
+            _lastCoordinateRequestTime = currentTime;
+            
+            std::vector<uint8_t> packetData;
+            packetData.push_back(static_cast<uint8_t>(Networking::PacketType::RequestPlayerCoordinates));
+            
+            GetNetworkServer()->BroadcastRaw(packetData, true);
+        }
     }
 
     bool Server::PreShutdown() {

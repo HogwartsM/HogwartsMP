@@ -1,10 +1,9 @@
 #include "network_server.h"
 #include "../../../shared/logging/logger.h"
 #include <enet/enet.h>
-#include <iostream>
-#include <algorithm>
 
-namespace HogwartsMP::Networking {
+namespace HogwartsMP {
+namespace Networking {
 
     NetworkServer::NetworkServer() {
         if (enet_initialize() != 0) {
@@ -272,4 +271,5 @@ namespace HogwartsMP::Networking {
         return std::string(buffer);
     }
 
-} // namespace HogwartsMP::Networking
+} // namespace Networking
+} // namespace HogwartsMP

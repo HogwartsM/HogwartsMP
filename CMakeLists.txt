@@ -3,6 +3,9 @@ cmake_policy(SET CMP0091 NEW)
 
 project(HogwartsMP VERSION 1.0 LANGUAGES CXX)
 
+# Global definitions
+add_compile_definitions(_SILENCE_EXPERIMENTAL_FILESYSTEM_DEPRECATION_WARNING)
+
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake/")
 
 # Add vendor dependencies

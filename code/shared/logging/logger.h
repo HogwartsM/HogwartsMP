@@ -1,8 +1,26 @@
 #pragma once
 
+#ifndef _SILENCE_EXPERIMENTAL_FILESYSTEM_DEPRECATION_WARNING
+#define _SILENCE_EXPERIMENTAL_FILESYSTEM_DEPRECATION_WARNING
+#endif
+
 #include <string>
 #include <memory>
-#include <filesystem>
+
+#if __has_include(<filesystem>)
+    #include <filesystem>
+    #if defined(__cpp_lib_filesystem) || (defined(_MSVC_LANG) && _MSVC_LANG >= 201703L)
+        namespace fs = std::filesystem;
+    #else
+        #include <experimental/filesystem>
+        namespace fs = std::experimental::filesystem;
+    #endif
+#elif __has_include(<experimental/filesystem>)
+    #include <experimental/filesystem>
+    namespace fs = std::experimental::filesystem;
+#else
+    #error "Missing filesystem support"
+#endif
 
 namespace HogwartsMP::Logging {
 
@@ -81,7 +99,7 @@ private:
 
     static bool _initialized;
     static LogLevel _level;
-    static std::filesystem::path _logFile;
+    static fs::path _logFile;
 };
 
 // Convenience macros

@@ -15,7 +15,8 @@ struct _ENetPeer;
 typedef _ENetHost ENetHost;
 typedef _ENetPeer ENetPeer;
 
-namespace HogwartsMP::Networking {
+namespace HogwartsMP {
+namespace Networking {
 
     // Define callback types
     using PacketCallback = std::function<void(uint32_t clientId, PacketType, const uint8_t*, size_t)>;
@@ -104,4 +105,5 @@ namespace HogwartsMP::Networking {
         uint64_t _bytesReceived = 0;
     };
 
-} // namespace HogwartsMP::Networking
+} // namespace Networking
+} // namespace HogwartsMP

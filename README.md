@@ -31,10 +31,6 @@ To develop HogwartsMP, please follow the compilation instructions below.
 
 HogwartsMP is licensed under the GNU Affero General Public License v3.0 (AGPL-3.0), details of which are in the [LICENSE](LICENSE) file in the repository. This project is for educational purposes only.
 
-## Links
+## Disclaimer
 
-- [GitHub Repository](https://github.com/Akitium/HogwartsM)
-- [Issues](https://github.com/Akitium/HogwartsM/issues)
-- [Releases](https://github.com/Akitium/HogwartsM/releases)
-
-**Disclaimer**: This is an unofficial multiplayer mod for educational purposes. Use at your own risk.
+This is an unofficial multiplayer mod for educational purposes. Use at your own risk.

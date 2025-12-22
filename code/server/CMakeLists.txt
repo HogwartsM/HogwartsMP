@@ -2,9 +2,9 @@ set(HOGWARTSMP_SERVER_FILES
     src/main.cpp
     src/core/server.cpp
     src/core/server_instance.cpp
-    src/core/cli.cpp
+    src/cli/cli.cpp
 
-    src/core/modules/human.cpp
+    src/game/modules/human.cpp
 
     src/networking/network_server.cpp
     src/logging/network_logger.cpp
@@ -17,11 +17,10 @@ set(HOGWARTSMP_SERVER_FILES
 add_executable(HogwartsMPServer ${HOGWARTSMP_SERVER_FILES})
 target_include_directories(HogwartsMPServer PRIVATE
     src
-    ../shared
-    ${CMAKE_SOURCE_DIR}/vendor/enet/include
-    ${CMAKE_SOURCE_DIR}/vendor/flecs
-    ${CMAKE_SOURCE_DIR}/vendor/glm
+    ${CMAKE_CURRENT_SOURCE_DIR}/../shared
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../vendor/enet/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../vendor/flecs
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../vendor/glm
 )
 target_link_libraries(HogwartsMPServer flecs enet)
-set_property(TARGET HogwartsMPServer PROPERTY CXX_STANDARD 17)
-set_property(TARGET HogwartsMPServer PROPERTY CXX_STANDARD_REQUIRED ON)
+target_compile_features(HogwartsMPServer PRIVATE cxx_std_17)

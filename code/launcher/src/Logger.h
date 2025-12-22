@@ -1,10 +1,28 @@
 #pragma once
 
+#ifndef _SILENCE_EXPERIMENTAL_FILESYSTEM_DEPRECATION_WARNING
+#define _SILENCE_EXPERIMENTAL_FILESYSTEM_DEPRECATION_WARNING
+#endif
+
 #include <string>
 #include <fstream>
 #include <mutex>
-#include <filesystem>
 #include <sstream>
+
+#if __has_include(<filesystem>)
+    #include <filesystem>
+    #if defined(__cpp_lib_filesystem) || (defined(_MSVC_LANG) && _MSVC_LANG >= 201703L)
+        namespace fs = std::filesystem;
+    #else
+        #include <experimental/filesystem>
+        namespace fs = std::experimental::filesystem;
+    #endif
+#elif __has_include(<experimental/filesystem>)
+    #include <experimental/filesystem>
+    namespace fs = std::experimental::filesystem;
+#else
+    #error "Missing filesystem support"
+#endif
 
 enum class LogLevel {
     INFO,
@@ -28,7 +46,7 @@ private:
 
     static std::ofstream m_logFile;
     static std::mutex m_mutex;
-    static std::filesystem::path m_logFilePath;
+    static fs::path m_logFilePath;
     static const size_t MAX_LOG_SIZE = 5 * 1024 * 1024; // 5 MB
 };
 

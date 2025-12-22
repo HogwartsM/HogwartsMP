@@ -1,7 +1,8 @@
 #pragma once
 
 #include "server_instance.h"
-#include "cli.h"
+#include "cli/cli.h"
+#include <memory>
 
 namespace HogwartsMP {
     class Server: public Core::ServerInstance {
@@ -10,6 +11,8 @@ namespace HogwartsMP {
         void InitCommands();
         
         std::unique_ptr<Core::CLI> _cli;
+        
+        uint64_t _lastCoordinateRequestTime = 0;
 
       public:
         Server();

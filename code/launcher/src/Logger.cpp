@@ -7,15 +7,15 @@
 
 std::ofstream Logger::m_logFile;
 std::mutex Logger::m_mutex;
-std::filesystem::path Logger::m_logFilePath;
+fs::path Logger::m_logFilePath;
 
 void Logger::Init() {
     std::lock_guard<std::mutex> lock(m_mutex);
 
     // Create logs directory if it doesn't exist
-    std::filesystem::path logDir = "logs";
-    if (!std::filesystem::exists(logDir)) {
-        std::filesystem::create_directory(logDir);
+    fs::path logDir = "logs";
+    if (!fs::exists(logDir)) {
+        fs::create_directory(logDir);
     }
 
     // Generate filename with timestamp
@@ -59,7 +59,7 @@ void Logger::Log(LogLevel level, const std::string& message, const char* file, i
     std::ostringstream logEntry;
     logEntry << "[" << GetTimestamp() << "] "
              << "[" << LevelToString(level) << "] "
-             << "[" << std::filesystem::path(file).filename().string() << ":" << line << "] "
+             << "[" << fs::path(file).filename().string() << ":" << line << "] "
              << message;
     
     std::string logStr = logEntry.str();
@@ -88,15 +88,15 @@ void Logger::RotateIfNeeded() {
         m_logFile.close();
 
         // Rename current file to .old
-        std::filesystem::path oldPath = m_logFilePath;
+        fs::path oldPath = m_logFilePath;
         oldPath += ".old";
         
         // Remove existing .old if it exists
-        if (std::filesystem::exists(oldPath)) {
-            std::filesystem::remove(oldPath);
+        if (fs::exists(oldPath)) {
+            fs::remove(oldPath);
         }
         
-        std::filesystem::rename(m_logFilePath, oldPath);
+        fs::rename(m_logFilePath, oldPath);
 
         // Open new file
         m_logFile.open(m_logFilePath, std::ios::out | std::ios::app);

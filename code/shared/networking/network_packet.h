@@ -30,6 +30,9 @@ enum class PacketType : uint8_t {
     // Chat
     ChatMessage = 40,
 
+    // Coordinates
+    RequestPlayerCoordinates = 41,
+
     // RPC
     RPC = 50,
 

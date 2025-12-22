@@ -27,4 +27,5 @@ target_link_libraries(HogwartsMPClient PRIVATE
     enet
     ws2_32
     winmm
+    psapi
 )

@@ -22,6 +22,7 @@ class ClientInstance {
 protected:
     ClientOptions _options;
     bool _initialized = false;
+    uint64_t _lastLogTime = 0;
 
     // Core subsystems
     std::unique_ptr<Networking::NetworkClient> _networkClient;
@@ -34,6 +35,9 @@ public:
     virtual bool Init(ClientOptions opts);
     virtual void Update();
     virtual void Shutdown();
+
+    // Memory reading
+    void LogPlayerLocation();
 
     // Accessors
     Networking::NetworkClient* GetNetworkClient() const { return _networkClient.get(); }
