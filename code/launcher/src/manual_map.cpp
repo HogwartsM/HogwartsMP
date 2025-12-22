@@ -8,7 +8,9 @@ DWORD WINAPI LoaderStub(LPVOID pData) {
     ManualMapData* data = (ManualMapData*)pData;
 
     BYTE* pBase = (BYTE*)data->imageBase;
-    auto* pOpt = &reinterpret_cast<IMAGE_NT_HEADERS*>(pBase + reinterpret_cast<IMAGE_DOS_HEADER*>(pData)->e_lfanew)->OptionalHeader;
+    auto* pDosHeader = reinterpret_cast<IMAGE_DOS_HEADER*>(pBase);
+    auto* pNTHeaders = reinterpret_cast<IMAGE_NT_HEADERS*>(pBase + pDosHeader->e_lfanew);
+    auto* pOpt = &pNTHeaders->OptionalHeader;
 
     // Resolve imports
     auto* pImportDescr = reinterpret_cast<IMAGE_IMPORT_DESCRIPTOR*>(pBase + pOpt->DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress);
@@ -41,8 +43,9 @@ DWORD WINAPI LoaderStub(LPVOID pData) {
             (*pCallback)(pBase, DLL_PROCESS_ATTACH, nullptr);
     }
 
-    // Call DllMain
-    data->fnDllMain((HMODULE)pBase, DLL_PROCESS_ATTACH, nullptr);
+    // Call DllMain (EntryPoint)
+    auto DllMain = reinterpret_cast<BOOL(WINAPI*)(HMODULE, DWORD, LPVOID)>(pBase + pOpt->AddressOfEntryPoint);
+    DllMain((HMODULE)pBase, DLL_PROCESS_ATTACH, nullptr);
 
     return 0;
 }

@@ -9,7 +9,6 @@ struct ManualMapData {
     LPVOID imageBase;
     HMODULE(WINAPI* fnLoadLibraryA)(LPCSTR);
     FARPROC(WINAPI* fnGetProcAddress)(HMODULE, LPCSTR);
-    BOOL(WINAPI* fnDllMain)(HMODULE, DWORD, LPVOID);
 };
 
 // Function executed in target process to finalize DLL mapping
