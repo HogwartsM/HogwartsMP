@@ -3,6 +3,8 @@ configure_file("${CMAKE_CURRENT_SOURCE_DIR}/shared/version.cpp" "${CMAKE_BINARY_
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
+add_subdirectory(framework)
+
 # Always build client and launcher on 64-bit systems
 if(CMAKE_SIZEOF_VOID_P EQUAL 8)
     add_subdirectory(client)
